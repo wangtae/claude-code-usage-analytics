@@ -2437,11 +2437,30 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
     # Get timezone once for performance
     user_tz = get_user_timezone()
 
+    # Check if Haiku messages should be excluded
+    from src.storage.snapshot_db import load_user_preferences
+    prefs = load_user_preferences()
+    exclude_haiku = prefs.get('exclude_haiku_messages', '0') == '1'
+
     # Group messages by session for visual separation
     from collections import defaultdict
     sessions: dict[str, list[UsageRecord]] = defaultdict(list)
     for record in records:
+        # Skip Haiku messages if exclusion is enabled
+        if exclude_haiku and record.model and 'haiku' in record.model.lower():
+            continue
         sessions[record.session_id].append(record)
+
+    # Check if all messages were filtered out
+    if not sessions or all(len(records) == 0 for records in sessions.values()):
+        filter_msg = " (all Haiku messages filtered out)" if exclude_haiku else ""
+        return Group(
+            Panel(
+                Text(f"No messages found for {target_date} at {hour_str}{filter_msg}", style=DIM),
+                title=f"[bold]Message Detail - {title_text}",
+                border_style="white",
+            )
+        )
 
     # Build list of message items (each is a small table with optional content)
     message_items = []
