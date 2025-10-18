@@ -2120,11 +2120,20 @@ def _create_daily_detail_view(records: list[UsageRecord], target_date: str) -> G
     day_name = date_obj.strftime("%A")  # Full day name (Monday, Tuesday, etc.)
     title_date = f"{target_date} ({day_name})"
 
-    # Filter records to only those from target_date
-    filtered_records = [
-        record for record in records
-        if record.timestamp.strftime("%Y-%m-%d") == target_date
-    ]
+    # Filter records to only those from target_date (using local timezone)
+    filtered_records = []
+    for record in records:
+        if record.timestamp:
+            # Convert UTC timestamp to local timezone for date comparison
+            try:
+                local_time = record.timestamp.astimezone()
+                record_date = local_time.strftime("%Y-%m-%d")
+                if record_date == target_date:
+                    filtered_records.append(record)
+            except Exception:
+                # Fallback to UTC if timezone conversion fails
+                if record.timestamp.strftime("%Y-%m-%d") == target_date:
+                    filtered_records.append(record)
 
     if not filtered_records:
         return Group(
