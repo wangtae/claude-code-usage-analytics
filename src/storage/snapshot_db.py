@@ -1891,10 +1891,17 @@ def save_limits_snapshot(
         # Save week_reset pattern to user_preferences for persistent storage
         # This allows the program to calculate weekly periods even without running `claude /usage`
         if week_reset:
+            # Fix: Claude /usage rounds 9:59am to 10am, but actual reset is 9:59am
+            # Adjust common rounded times to actual reset times
+            adjusted_reset = week_reset
+            # Replace "10am" with "9:59am" (weekly reset is always at X:59am, not X:00am)
+            adjusted_reset = re.sub(r'\b10am\b', '9:59am', adjusted_reset, flags=re.IGNORECASE)
+            adjusted_reset = re.sub(r'\b10:00am\b', '9:59am', adjusted_reset, flags=re.IGNORECASE)
+
             cursor.execute("""
                 INSERT OR REPLACE INTO user_preferences (key, value, updated_at)
                 VALUES (?, ?, ?)
-            """, ('week_reset_pattern', week_reset, timestamp))
+            """, ('week_reset_pattern', adjusted_reset, timestamp))
 
         conn.commit()
     finally:
