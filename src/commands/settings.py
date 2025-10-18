@@ -38,7 +38,7 @@ def run(console: Console) -> None:
             _display_settings_menu(console, prefs, machine_name, db_path)
 
             # Wait for user input
-            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-5, 8-9, a-i[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
+            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-5, 8-9, a-j[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
 
             key = _read_key()
 
@@ -80,6 +80,9 @@ def run(console: Console) -> None:
                 _edit_database_path(console)
             elif key.lower() == 'i':  # Check Data Sync
                 _check_and_sync_data(console)
+            elif key.lower() == 'j':  # Exclude Haiku Messages
+                setting_num = 16
+                _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'x':  # Reset to defaults
                 _reset_to_defaults(console, save_user_preference)
     except KeyboardInterrupt:
@@ -335,6 +338,12 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     settings_table.add_row("[#ff8800]\\[e][/#ff8800]", "Color Range Low (%)", color_range_low)
     settings_table.add_row("[#ff8800]\\[f][/#ff8800]", "Color Range High (%)", color_range_high)
 
+    # Exclude Haiku Messages
+    from src.config.defaults import DEFAULT_PREFERENCES
+    exclude_haiku = prefs.get('exclude_haiku_messages', DEFAULT_PREFERENCES['exclude_haiku_messages'])
+    exclude_haiku_display = "Enabled" if exclude_haiku == "1" else "Disabled"
+    settings_table.add_row("[#ff8800]\\[j][/#ff8800]", "Exclude Haiku Messages", exclude_haiku_display)
+
     # Empty row for spacing
     settings_table.add_row("", "", "")
 
@@ -392,6 +401,11 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     # Handle color range settings separately (14, 15)
     if setting_num in [14, 15]:
         _edit_color_range_setting(console, setting_num, prefs, save_func)
+        return
+
+    # Handle exclude haiku messages setting separately (16)
+    if setting_num == 16:
+        _edit_exclude_haiku_setting(console, prefs, save_func)
         return
 
     if setting_num not in setting_map:
@@ -792,6 +806,67 @@ def _edit_color_range_setting(console: Console, setting_num: int, prefs: dict, s
                         console.print("[red]✗ Invalid number. Enter a number or 'd' for default[/red]")
         except (EOFError, KeyboardInterrupt):
             console.print("\n[yellow]Input cancelled[/yellow]")
+
+    console.print("\n[dim]Press any key to continue...[/dim]")
+    _read_key()
+
+
+def _edit_exclude_haiku_setting(console: Console, prefs: dict, save_func) -> None:
+    """
+    Edit exclude haiku messages setting (16).
+
+    Args:
+        console: Rich console for rendering
+        prefs: Current preferences dictionary
+        save_func: Function to save preference
+    """
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    console.print()
+    console.print("[bold]Edit Exclude Haiku Messages[/bold]")
+    console.print()
+
+    current = prefs.get('exclude_haiku_messages', DEFAULT_PREFERENCES['exclude_haiku_messages'])
+    current_display = "Enabled" if current == "1" else "Disabled"
+    default = DEFAULT_PREFERENCES['exclude_haiku_messages']
+    default_display = "Enabled" if default == "1" else "Disabled"
+
+    console.print(f"[dim]Current value: {current_display}[/dim]")
+    console.print(f"[dim]Default value: {default_display}[/dim]")
+    console.print()
+    console.print("[dim]When enabled, Haiku model messages are excluded from output displays.[/dim]")
+    console.print("[dim]This affects statistics and visualizations across all views.[/dim]")
+    console.print()
+    console.print("[dim]Enter 'yes' to enable, 'no' to disable, 'd' for default, or press Enter to keep current:[/dim]")
+
+    try:
+        sys.stdout.write("> ")
+        sys.stdout.flush()
+        new_value = input().strip().lower()
+
+        if not new_value:
+            # Keep current
+            return
+
+        if new_value in ['d', 'default']:
+            # Reset to default by deleting from database
+            from src.storage.snapshot_db import delete_user_preference
+            delete_user_preference('exclude_haiku_messages')
+            console.print(f"[green]✓ Exclude Haiku Messages reset to default: {default_display}[/green]")
+            console.print(f"[dim]  (Using value from src/config/defaults.py)[/dim]")
+        elif new_value in ['yes', 'y', 'true', '1', 'enable', 'enabled']:
+            save_func('exclude_haiku_messages', '1')
+            console.print("[green]✓ Exclude Haiku Messages enabled[/green]")
+            console.print("[dim]  Haiku messages will be excluded from all displays[/dim]")
+        elif new_value in ['no', 'n', 'false', '0', 'disable', 'disabled']:
+            save_func('exclude_haiku_messages', '0')
+            console.print("[green]✓ Exclude Haiku Messages disabled[/green]")
+            console.print("[dim]  Haiku messages will be included in displays[/dim]")
+        else:
+            console.print("[yellow]Invalid input. Please enter 'yes', 'no', or 'd'[/yellow]")
+
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Input cancelled[/yellow]")
 
     console.print("\n[dim]Press any key to continue...[/dim]")
     _read_key()

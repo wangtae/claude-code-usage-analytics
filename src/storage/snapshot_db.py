@@ -3683,18 +3683,26 @@ def get_device_hourly_distribution(machine_name: str, db_path: Path = DEFAULT_DB
     try:
         cursor = conn.cursor()
 
+        # Check if Haiku messages should be excluded
+        prefs = load_user_preferences()
+        from src.config.defaults import DEFAULT_PREFERENCES
+        exclude_haiku = prefs.get('exclude_haiku_messages', DEFAULT_PREFERENCES['exclude_haiku_messages']) == '1'
+
+        # Build WHERE clause for model filtering
+        model_filter = "(model IS NULL OR LOWER(model) NOT LIKE '%haiku%')" if exclude_haiku else "1=1"
+
         # Determine date range based on period
         today = datetime.now().date()
 
         if period == "all":
             # All time: no date filter
-            query = """
+            query = f"""
                 SELECT
                     CAST(strftime('%w', timestamp, 'localtime') AS INTEGER) as day_of_week,
                     CAST(strftime('%H', timestamp, 'localtime') AS INTEGER) as hour,
                     SUM(total_tokens) as total_tokens
                 FROM usage_records
-                WHERE (model IS NULL OR LOWER(model) NOT LIKE '%haiku%')
+                WHERE {model_filter}
                 GROUP BY day_of_week, hour
             """
             cursor.execute(query)
@@ -3722,14 +3730,14 @@ def get_device_hourly_distribution(machine_name: str, db_path: Path = DEFAULT_DB
             else:
                 month_end = datetime(target_year, target_month_num + 1, 1).date() - timedelta(days=1)
 
-            query = """
+            query = f"""
                 SELECT
                     CAST(strftime('%w', timestamp, 'localtime') AS INTEGER) as day_of_week,
                     CAST(strftime('%H', timestamp, 'localtime') AS INTEGER) as hour,
                     SUM(total_tokens) as total_tokens
                 FROM usage_records
                 WHERE date >= ? AND date <= ?
-                  AND (model IS NULL OR LOWER(model) NOT LIKE '%haiku%')
+                  AND {model_filter}
                 GROUP BY day_of_week, hour
             """
             cursor.execute(query, (month_start.strftime("%Y-%m-%d"), month_end.strftime("%Y-%m-%d")))
@@ -3743,14 +3751,14 @@ def get_device_hourly_distribution(machine_name: str, db_path: Path = DEFAULT_DB
             week_start = target_week_monday.strftime("%Y-%m-%d")
             week_end = target_week_sunday.strftime("%Y-%m-%d")
 
-            query = """
+            query = f"""
                 SELECT
                     CAST(strftime('%w', timestamp, 'localtime') AS INTEGER) as day_of_week,
                     CAST(strftime('%H', timestamp, 'localtime') AS INTEGER) as hour,
                     SUM(total_tokens) as total_tokens
                 FROM usage_records
                 WHERE date >= ? AND date <= ?
-                  AND (model IS NULL OR LOWER(model) NOT LIKE '%haiku%')
+                  AND {model_filter}
                 GROUP BY day_of_week, hour
             """
             cursor.execute(query, (week_start, week_end))

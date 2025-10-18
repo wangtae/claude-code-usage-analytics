@@ -131,6 +131,7 @@ DEFAULT_PREFERENCES = {
     "db_path": "",                  # custom path or empty (auto-detect)
     "anonymize_projects": "0",      # 0=off, 1=on
     "timezone": "auto",             # auto | UTC | Asia/Seoul | ...
+    "exclude_haiku_messages": "1",  # 1=exclude Haiku from message output, 0=include
 }
 
 #endregion
