@@ -2439,10 +2439,13 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
 
     # Group messages by session for visual separation
     # Note: Haiku filtering is already done in load_all_devices_messages_by_hour()
+    # Skip User messages as they have no token usage data (only show Assistant messages)
     from collections import defaultdict
     sessions: dict[str, list[UsageRecord]] = defaultdict(list)
     for record in records:
-        sessions[record.session_id].append(record)
+        # Only include Assistant messages (User messages have no token/cost data)
+        if not record.is_user_prompt:
+            sessions[record.session_id].append(record)
 
     # Build list of message items (each is a small table with optional content)
     message_items = []
