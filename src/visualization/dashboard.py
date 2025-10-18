@@ -513,14 +513,23 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
         sections_to_render.append(("daily_detail", daily_detail))
 
         # Calculate hourly hours for keyboard navigation
-        # Filter records to only those from target_date
+        # Filter records to only those from target_date (using local timezone)
         from collections import defaultdict
         from src.utils.timezone import format_local_time, get_user_timezone
 
-        filtered_records = [
-            record for record in records
-            if record.timestamp.strftime("%Y-%m-%d") == daily_detail_date
-        ]
+        filtered_records = []
+        for record in records:
+            if record.timestamp:
+                # Convert UTC timestamp to local timezone for date comparison
+                try:
+                    local_time = record.timestamp.astimezone()
+                    record_date = local_time.strftime("%Y-%m-%d")
+                    if record_date == daily_detail_date:
+                        filtered_records.append(record)
+                except Exception:
+                    # Fallback to UTC if timezone conversion fails
+                    if record.timestamp.strftime("%Y-%m-%d") == daily_detail_date:
+                        filtered_records.append(record)
 
         if filtered_records:
             user_tz = get_user_timezone()
