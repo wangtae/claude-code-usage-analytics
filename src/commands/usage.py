@@ -43,6 +43,111 @@ VIEW_MODE_DEVICES = "devices"
 #region Functions
 
 
+def _calculate_next_reset_from_pattern(week_reset_pattern: str) -> tuple[datetime, str, str] | None:
+    """
+    Calculate next weekly reset time from stored pattern.
+
+    This function extracts the weekly reset time pattern (day of week, time, timezone)
+    and calculates when the next reset will occur. This allows the program to display
+    accurate weekly periods even without running `claude /usage` at startup.
+
+    Args:
+        week_reset_pattern: Pattern string like "9:59am (Asia/Seoul)" or "Oct 17, 9:59am (Asia/Seoul)"
+
+    Returns:
+        Tuple of (next_reset_datetime, reset_time_str, reset_day_name) or None if parsing fails
+        - next_reset_datetime: Next occurrence of the weekly reset (UTC, naive)
+        - reset_time_str: Reset time string for display (e.g., "09:59")
+        - reset_day_name: Day of week name for reset (e.g., "Fri")
+
+    Example:
+        Pattern: "Oct 17, 9:59am (Asia/Seoul)" on Monday 10:00
+        Returns: (next_friday_09:59_utc, "09:59", "Fri")
+    """
+    try:
+        from datetime import datetime, timezone as dt_timezone
+        from zoneinfo import ZoneInfo
+
+        # Extract timezone
+        tz_match = re.search(r'\((.*?)\)', week_reset_pattern)
+        tz_name = tz_match.group(1) if tz_match else 'UTC'
+        pattern_no_tz = week_reset_pattern.split(' (')[0].strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
+
+        # Extract time (e.g., "9:59am" or "10am")
+        time_match = re.search(r'(\d+):?(\d*)(am|pm)', pattern_no_tz)
+        if not time_match:
+            return None
+
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2)) if time_match.group(2) else 0
+        meridiem = time_match.group(3)
+
+        # Convert to 24-hour format
+        if meridiem == 'pm' and hour != 12:
+            hour += 12
+        elif meridiem == 'am' and hour == 12:
+            hour = 0
+
+        # Format reset time for display
+        reset_time_str = f"{hour:02d}:{minute:02d}"
+
+        # Try to extract day of week from date pattern (e.g., "Oct 17, 9:59am")
+        # If date is provided, we can determine the day of week
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),', pattern_no_tz)
+        reset_day_of_week = None  # Monday=0, Sunday=6
+
+        if date_match:
+            month_name = date_match.group(1)
+            day = int(date_match.group(2))
+            year = datetime.now(tz).year
+
+            try:
+                month_num = datetime.strptime(month_name, '%b').month
+                sample_date = datetime(year, month_num, day, tzinfo=tz)
+                reset_day_of_week = sample_date.weekday()  # Monday=0, Sunday=6
+            except Exception:
+                pass
+
+        # Calculate next reset occurrence
+        now = datetime.now(tz)
+
+        if reset_day_of_week is not None:
+            # We know the day of week - find next occurrence of that day at the specified time
+            current_day_of_week = now.weekday()
+            days_until_reset = (reset_day_of_week - current_day_of_week) % 7
+
+            # Calculate next reset datetime
+            next_reset = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            next_reset += timedelta(days=days_until_reset)
+
+            # If the reset time is in the past, move to next week
+            if next_reset <= now:
+                next_reset += timedelta(days=7)
+        else:
+            # Day of week unknown - assume weekly pattern and calculate next occurrence
+            # Use the current day as a reference and find next occurrence
+            next_reset = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            # Find the next occurrence (could be today or in the future)
+            while next_reset <= now:
+                next_reset += timedelta(days=7)
+
+        # Get day of week name from calculated reset time
+        reset_day_name = next_reset.strftime("%a")  # Mon, Tue, Wed, etc.
+
+        # Convert to UTC naive datetime
+        utc_dt = next_reset.astimezone(dt_timezone.utc)
+        return (utc_dt.replace(tzinfo=None), reset_time_str, reset_day_name)
+
+    except Exception:
+        return None
+
+
 def _parse_week_reset_date(week_reset_str: str) -> datetime | None:
     """
     Parse week reset string to datetime object.
@@ -1090,9 +1195,31 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
     # Apply view mode filter
     display_records = list(all_records)
     if view_mode == VIEW_MODE_WEEKLY:
+        # Try to get week reset from DB or from stored pattern
+        week_reset_str = None
+        preset_reset_time = None
+        preset_reset_day = None
+
         if limits_from_db and limits_from_db.get("week_reset"):
+            week_reset_str = limits_from_db["week_reset"]
+        else:
+            # No limits data available - try to use stored pattern
+            from src.storage.snapshot_db import load_user_preferences
+            prefs = load_user_preferences()
+            week_reset_pattern = prefs.get('week_reset_pattern')
+
+            if week_reset_pattern:
+                # Calculate next reset from stored pattern
+                reset_result = _calculate_next_reset_from_pattern(week_reset_pattern)
+                if reset_result:
+                    # Use the pattern string for parsing
+                    week_reset_str = week_reset_pattern
+                    # Extract preset values from calculation
+                    _, preset_reset_time, preset_reset_day = reset_result
+
+        if week_reset_str:
             # Parse week reset date and filter records for weekly mode only
-            week_reset_date = _parse_week_reset_date(limits_from_db["week_reset"])
+            week_reset_date = _parse_week_reset_date(week_reset_str)
             if week_reset_date:
                 # Apply offset for week navigation
                 adjusted_week_reset_date = week_reset_date - timedelta(weeks=-time_offset)
@@ -1106,17 +1233,23 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 reset_time_str = adjusted_week_reset_date.strftime("%H:%M")
 
                 # Get reset day of week (e.g., "Fri" for Friday)
-                from zoneinfo import ZoneInfo
-                from datetime import timezone
-                # Convert to local timezone for display
-                tz_name = limits_from_db.get("week_reset", "").split("(")[-1].rstrip(")") if "(" in limits_from_db.get("week_reset", "") else "UTC"
-                try:
-                    tz = ZoneInfo(tz_name)
-                    local_reset_time = adjusted_week_reset_date.replace(tzinfo=timezone.utc).astimezone(tz)
-                    reset_day_name = local_reset_time.strftime("%a")  # Mon, Tue, Wed, etc.
-                    reset_time_str = local_reset_time.strftime("%H:%M")
-                except Exception:
-                    reset_day_name = adjusted_week_reset_date.strftime("%a")
+                # Use preset values if available (from stored pattern), otherwise calculate
+                if preset_reset_time and preset_reset_day:
+                    reset_time_str = preset_reset_time
+                    reset_day_name = preset_reset_day
+                else:
+                    from zoneinfo import ZoneInfo
+                    from datetime import timezone
+                    # Convert to local timezone for display
+                    tz_name = week_reset_str.split("(")[-1].rstrip(")") if "(" in week_reset_str else "UTC"
+                    try:
+                        tz = ZoneInfo(tz_name)
+                        local_reset_time = adjusted_week_reset_date.replace(tzinfo=timezone.utc).astimezone(tz)
+                        reset_day_name = local_reset_time.strftime("%a")  # Mon, Tue, Wed, etc.
+                        reset_time_str = local_reset_time.strftime("%H:%M")
+                    except Exception:
+                        reset_day_name = adjusted_week_reset_date.strftime("%a")
+                        reset_time_str = adjusted_week_reset_date.strftime("%H:%M")
 
                 week_start_date = week_start_datetime.date()
                 week_end_date = (week_end_datetime - timedelta(seconds=1)).date()

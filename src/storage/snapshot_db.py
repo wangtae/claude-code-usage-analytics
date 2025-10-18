@@ -1856,7 +1856,7 @@ def save_limits_snapshot(
         week_pct: Week (all models) usage percentage
         opus_pct: Opus usage percentage
         session_reset: Session reset time
-        week_reset: Week reset time
+        week_reset: Week reset time (e.g., "Oct 17, 10am (Asia/Seoul)" or "9:59am (Asia/Seoul)")
         opus_reset: Opus reset time
         db_path: Path to the SQLite database file
 
@@ -1887,6 +1887,14 @@ def save_limits_snapshot(
             week_reset,
             opus_reset,
         ))
+
+        # Save week_reset pattern to user_preferences for persistent storage
+        # This allows the program to calculate weekly periods even without running `claude /usage`
+        if week_reset:
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_preferences (key, value, updated_at)
+                VALUES (?, ?, ?)
+            """, ('week_reset_pattern', week_reset, timestamp))
 
         conn.commit()
     finally:

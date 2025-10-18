@@ -1,6 +1,6 @@
 [project]
 name = "claude-goblin-mod"
-version = "1.2.4"
+version = "1.2.5"
 description = "Enhanced fork of Claude Goblin with multi-PC support via OneDrive synchronization"
 readme = "README.md"
 requires-python = ">=3.10"
