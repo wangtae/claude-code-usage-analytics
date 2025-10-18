@@ -3166,6 +3166,7 @@ def load_all_devices_messages_by_hour(
     Load messages for a specific date and hour from ALL registered devices.
 
     Combines messages from all machine-specific databases.
+    Respects the "exclude_haiku_messages" user preference.
 
     Args:
         target_date: Date in YYYY-MM-DD format (e.g., "2025-10-15")
@@ -3190,6 +3191,17 @@ def load_all_devices_messages_by_hour(
         if machine_db.exists():
             messages = load_messages_by_hour(target_date, target_hour, machine_db)
             all_messages.extend(messages)
+
+    # Check if Haiku messages should be excluded
+    prefs = load_user_preferences()
+    exclude_haiku = prefs.get('exclude_haiku_messages', '0') == '1'
+
+    if exclude_haiku:
+        # Filter out Haiku messages
+        all_messages = [
+            msg for msg in all_messages
+            if not (msg.model and 'haiku' in msg.model.lower())
+        ]
 
     # Sort by timestamp to maintain chronological order
     all_messages.sort(key=lambda r: r.timestamp)
