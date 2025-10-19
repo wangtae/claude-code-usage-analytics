@@ -295,30 +295,14 @@ def _limits_updater_thread(stop_event: threading.Event, interval: int = 60) -> N
     Updates limits data from Claude CLI and saves to database every N seconds.
     This prevents blocking the main dashboard updates while keeping limits data fresh.
 
+    Note: Initial update is now done synchronously in main thread before starting
+    this background thread, ensuring fresh data is displayed immediately on startup.
+
     Args:
         stop_event: Threading event to signal when to stop updating
         interval: Seconds between updates (default: 60)
     """
-    # Wait 5 seconds before first update (let initial dashboard render first)
-    if not stop_event.wait(5):
-        # Do initial update
-        tracking_mode = get_tracking_mode()
-        if tracking_mode in ["both", "limits"]:
-            try:
-                limits = capture_limits()
-                if limits and "error" not in limits:
-                    save_limits_snapshot(
-                        session_pct=limits["session_pct"],
-                        week_pct=limits["week_pct"],
-                        opus_pct=limits["opus_pct"],
-                        session_reset=limits["session_reset"],
-                        week_reset=limits["week_reset"],
-                        opus_reset=limits["opus_reset"],
-                    )
-            except Exception:
-                pass  # Silently ignore errors in background thread
-
-    # Continue updating at regular intervals
+    # Wait for the first interval before updating (initial update done in main thread)
     while not stop_event.is_set():
         if stop_event.wait(interval):
             break  # Stop event was set during wait
@@ -846,11 +830,39 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     keyboard_thread = threading.Thread(target=_keyboard_listener, args=(view_mode_ref, stop_event), daemon=True)
     keyboard_thread.start()
 
-    # Start background limits updater thread
+    # Do initial limits update synchronously to ensure fresh data on startup
+    tracking_mode = get_tracking_mode()
+    if tracking_mode in ["both", "limits"]:
+        with console.status("[bold #ff8800]Fetching latest usage limits...", spinner="dots", spinner_style="#ff8800"):
+            try:
+                limits = capture_limits()
+                if limits and "error" not in limits:
+                    save_limits_snapshot(
+                        session_pct=limits["session_pct"],
+                        week_pct=limits["week_pct"],
+                        opus_pct=limits["opus_pct"],
+                        session_reset=limits["session_reset"],
+                        week_reset=limits["week_reset"],
+                        opus_reset=limits["opus_reset"],
+                    )
+                    console.print(f"[dim green]✓ Updated: Session {limits['session_pct']}%, Week {limits['week_pct']}%[/dim green]")
+                elif limits and "error" in limits:
+                    console.print(f"[dim yellow]⚠ Limits update failed: {limits.get('message', 'Unknown error')}[/dim yellow]")
+                else:
+                    console.print(f"[dim yellow]⚠ Limits update returned None - check 'claude /usage' command[/dim yellow]")
+            except Exception as e:
+                console.print(f"[dim red]✗ Limits update exception: {e}[/dim red]")
+                import traceback as tb
+                console.print(f"[dim red]{tb.format_exc()}[/dim red]")
+
+        # Give user time to see debug message before dashboard clears screen
+        time.sleep(2)
+
+    # Start background limits updater thread for periodic updates
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
-    # Display initial dashboard (skip limits update - will be done by background thread)
+    # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits=False, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)
 
     try:
@@ -953,11 +965,39 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     }
     stop_event = threading.Event()
 
-    # Start background limits updater thread
+    # Do initial limits update synchronously to ensure fresh data on startup
+    tracking_mode = get_tracking_mode()
+    if tracking_mode in ["both", "limits"] and not skip_limits:
+        with console.status("[bold #ff8800]Fetching latest usage limits...", spinner="dots", spinner_style="#ff8800"):
+            try:
+                limits = capture_limits()
+                if limits and "error" not in limits:
+                    save_limits_snapshot(
+                        session_pct=limits["session_pct"],
+                        week_pct=limits["week_pct"],
+                        opus_pct=limits["opus_pct"],
+                        session_reset=limits["session_reset"],
+                        week_reset=limits["week_reset"],
+                        opus_reset=limits["opus_reset"],
+                    )
+                    console.print(f"[dim green]✓ Updated: Session {limits['session_pct']}%, Week {limits['week_pct']}%[/dim green]")
+                elif limits and "error" in limits:
+                    console.print(f"[dim yellow]⚠ Limits update failed: {limits.get('message', 'Unknown error')}[/dim yellow]")
+                else:
+                    console.print(f"[dim yellow]⚠ Limits update returned None - check 'claude /usage' command[/dim yellow]")
+            except Exception as e:
+                console.print(f"[dim red]✗ Limits update exception: {e}[/dim red]")
+                import traceback as tb
+                console.print(f"[dim red]{tb.format_exc()}[/dim red]")
+
+        # Give user time to see debug message before dashboard clears screen
+        time.sleep(2)
+
+    # Start background limits updater thread for periodic updates
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
-    # Display initial dashboard (skip limits update - will be done by background thread)
+    # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)
 
     # Start file watcher (monitors changes without immediate callback)

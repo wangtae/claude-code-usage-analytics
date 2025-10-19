@@ -38,12 +38,14 @@ def capture_limits() -> dict | None:
         master, slave = pty.openpty()
 
         # Start claude /usage with the PTY
+        # Run from home directory to avoid trust prompts in project folders
         process = subprocess.Popen(
             ['claude', '/usage'],
             stdin=slave,
             stdout=slave,
             stderr=slave,
-            close_fds=True
+            close_fds=True,
+            cwd=os.path.expanduser('~')
         )
 
         # Close slave in parent process (child keeps it open)
@@ -52,7 +54,9 @@ def capture_limits() -> dict | None:
         # Read output until we see complete data
         output = b''
         start_time = time.time()
-        max_wait = 10
+        max_wait = 20  # Increased from 10 to 20 seconds for SDK version
+        trust_prompt_handled = False
+        loading_detected = False
 
         while time.time() - start_time < max_wait:
             # Check if data is available to read
@@ -64,11 +68,36 @@ def capture_limits() -> dict | None:
                     if chunk:
                         output += chunk
 
-                        # Check if we hit trust prompt early - no point waiting
-                        if b'Do you trust the files in this folder?' in output:
-                            # We got the trust prompt, stop waiting
-                            time.sleep(0.5)  # Give it a bit more time to finish rendering
-                            break
+                        # Check if we hit trust prompt and auto-accept
+                        # Support both old and new Claude Code SDK formats
+                        if not trust_prompt_handled:
+                            # New SDK format: numbered menu (1. Yes, continue / 2. No, exit)
+                            if b'Yes, continue' in output or b'Ready to code here?' in output:
+                                time.sleep(0.3)
+                                try:
+                                    # Press Enter to select default option (1. Yes, continue)
+                                    os.write(master, b'\r')
+                                    trust_prompt_handled = True
+                                except:
+                                    pass
+                                continue
+                            # Old format: "Do you trust the files in this folder? (y/n)"
+                            elif b'Do you trust' in output:
+                                time.sleep(0.3)
+                                try:
+                                    # Send 'y' for yes
+                                    os.write(master, b'y\r')
+                                    trust_prompt_handled = True
+                                except:
+                                    pass
+                                continue
+
+                        # Detect loading state - need to wait longer
+                        if not loading_detected and b'Loading usage data' in output:
+                            loading_detected = True
+                            # Reset timer to allow more time for data to load
+                            start_time = time.time()
+                            continue
 
                         # Check if we have complete data
                         # Look for the usage screen's exit message, not the loading screen's "esc to interrupt"
@@ -112,12 +141,14 @@ def capture_limits() -> dict | None:
         # Strip ANSI codes
         clean_output = _strip_ansi(output_str)
 
-        # Check if we hit the trust prompt
-        if 'Do you trust the files in this folder?' in clean_output:
-            return {
-                "error": "trust_prompt",
-                "message": "Claude prompted for folder trust. Please run 'claude' in a trusted folder first, or cd to a project directory."
-            }
+        # Debug: Save output to temp file for inspection
+        import tempfile
+        debug_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='_claude_usage_debug.txt')
+        debug_file.write(f"=== Raw output ({len(output_str)} bytes) ===\n")
+        debug_file.write(output_str)
+        debug_file.write(f"\n\n=== Clean output ({len(clean_output)} bytes) ===\n")
+        debug_file.write(clean_output)
+        debug_file.close()
 
         # Parse for percentages and reset times
         session_match = re.search(r'Current session.*?(\d+)%\s+used.*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
@@ -126,6 +157,21 @@ def capture_limits() -> dict | None:
 
         # For Opus reset time: try to find "Resets" info, fallback to week reset if 0%
         opus_reset_match = re.search(r'Current week \(Opus\).*?(\d+)%\s+used.*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
+
+        # Debug: Write match results
+        with open(debug_file.name, 'a') as f:
+            f.write(f"\n\n=== Pattern matching results ===\n")
+            f.write(f"session_match: {session_match.groups() if session_match else None}\n")
+            f.write(f"week_match: {week_match.groups() if week_match else None}\n")
+            f.write(f"opus_match: {opus_match.groups() if opus_match else None}\n")
+
+        # If parsing failed, return error with debug file path
+        if not (session_match and week_match and opus_match):
+            return {
+                "error": "parse_failed",
+                "message": f"Failed to parse claude /usage output. Debug file: {debug_file.name}",
+                "debug_file": debug_file.name
+            }
 
         if session_match and week_match and opus_match:
             # Clean reset strings (remove \r and extra whitespace)

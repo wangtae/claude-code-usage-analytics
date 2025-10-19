@@ -1,13 +1,12 @@
 [project]
-name = "claude-goblin-mod"
-version = "1.2.5"
-description = "Enhanced fork of Claude Goblin with multi-PC support via OneDrive synchronization"
+name = "claude-code-usage-analytics"
+version = "1.2.6"
+description = "Claude Code usage analytics with multi-device support via OneDrive synchronization"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "wangtae"},
-    {name = "Kurt Buhler"}  # Original author credit
 ]
 keywords = ["claude", "claude-code", "usage", "analytics", "tui", "dashboard", "visualization"]
 classifiers = [
@@ -29,13 +28,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/wangtae/claude-goblin-mod"
-Repository = "https://github.com/wangtae/claude-goblin-mod"
-Issues = "https://github.com/wangtae/claude-goblin-mod/issues"
-"Original Project" = "https://github.com/data-goblin/claude-goblin"
+Homepage = "https://github.com/wangtae/claude-code-usage-analytics"
+Repository = "https://github.com/wangtae/claude-code-usage-analytics"
+Issues = "https://github.com/wangtae/claude-code-usage-analytics/issues"
 
 [project.scripts]
-claude-goblin = "src.cli:main"
 ccu = "src.cli:main"
 
 [build-system]
