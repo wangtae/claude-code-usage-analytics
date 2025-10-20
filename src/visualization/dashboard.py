@@ -2907,6 +2907,150 @@ def _create_daily_detail_view(records: list[UsageRecord], target_date: str) -> G
     return Group(hourly_panel, spacing, model_panel, spacing, project_panel)
 
 
+def _create_session_aggregated_view(sessions: dict, target_date: str, target_hour: int, user_tz: str) -> Group:
+    """
+    Create session+model aggregated view for a specific hour.
+
+    Shows each session with per-model breakdown of tokens and cost.
+
+    Args:
+        sessions: Dict mapping session_id to list of UsageRecord objects
+        target_date: Target date in YYYY-MM-DD format
+        target_hour: Target hour in 24-hour format (0-23)
+        user_tz: User's timezone for time formatting
+
+    Returns:
+        Group containing session+model aggregated tables
+    """
+    from src.models.pricing import calculate_cost, format_cost
+    from src.utils.timezone import format_local_time
+
+    # Parse target date to get day of week
+    date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+    day_name = date_obj.strftime("%A")
+    hour_str = f"{target_hour:02d}:00"
+    title_text = f"{target_date} ({day_name}) - {hour_str}"
+
+    all_items = []
+
+    # Process each session
+    for session_idx, (session_id, session_records) in enumerate(sessions.items()):
+        # Get first and last timestamp for this session
+        first_timestamp = min(r.timestamp for r in session_records)
+        last_timestamp = max(r.timestamp for r in session_records)
+        start_time_str = format_local_time(first_timestamp, "%H:%M:%S", user_tz)
+        end_time_str = format_local_time(last_timestamp, "%H:%M:%S", user_tz)
+        time_range_str = f"{start_time_str} - {end_time_str}"
+
+        # Show short session ID
+        short_session_id = session_id[:8] if len(session_id) >= 8 else session_id
+
+        # Aggregate by model within this session
+        from collections import defaultdict
+        model_data = defaultdict(lambda: {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+            "cost": 0.0,
+            "messages": 0,
+        })
+
+        for record in session_records:
+            if record.model and record.token_usage:
+                bucket = model_data[record.model]
+                bucket["input_tokens"] += record.token_usage.input_tokens
+                bucket["output_tokens"] += record.token_usage.output_tokens
+                bucket["cache_creation"] += record.token_usage.cache_creation_tokens
+                bucket["cache_read"] += record.token_usage.cache_read_tokens
+                bucket["messages"] += 1
+
+                if record.model != "<synthetic>":
+                    cost = calculate_cost(
+                        record.token_usage.input_tokens,
+                        record.token_usage.output_tokens,
+                        record.model,
+                        record.token_usage.cache_creation_tokens,
+                        record.token_usage.cache_read_tokens,
+                    )
+                    bucket["cost"] += cost
+
+        # Create table for this session
+        session_table = Table(show_header=True, box=None, padding=(0, 2))
+        session_table.add_column("Model", style="white", justify="left", width=18)
+        session_table.add_column("Msgs", style="white", justify="right", width=6)
+        session_table.add_column("Input", style=BLUE, justify="right", width=10)
+        session_table.add_column("Output", style=BLUE, justify="right", width=10)
+        session_table.add_column("Cache W", style="magenta", justify="right", width=10)
+        session_table.add_column("Cache R", style="magenta", justify="right", width=10)
+        session_table.add_column("Cost", style="green", justify="right", width=10)
+
+        # Sort models by cost (descending)
+        sorted_models = sorted(model_data.items(), key=lambda x: x[1]["cost"], reverse=True)
+
+        # Add rows
+        for model, data in sorted_models:
+            # Model name (shortened)
+            model_name = model.split("/")[-1] if "/" in model else model
+            if "claude" in model_name.lower():
+                model_name = model_name.replace("claude-", "")
+
+            session_table.add_row(
+                model_name,
+                str(data["messages"]),
+                _format_number(data["input_tokens"]),
+                _format_number(data["output_tokens"]),
+                _format_number(data["cache_creation"]),
+                _format_number(data["cache_read"]),
+                format_cost(data["cost"], precision=4),
+            )
+
+        # Add totals row
+        total_msgs = sum(d["messages"] for d in model_data.values())
+        total_input = sum(d["input_tokens"] for d in model_data.values())
+        total_output = sum(d["output_tokens"] for d in model_data.values())
+        total_cache_w = sum(d["cache_creation"] for d in model_data.values())
+        total_cache_r = sum(d["cache_read"] for d in model_data.values())
+        total_cost = sum(d["cost"] for d in model_data.values())
+
+        session_table.add_row(
+            "[bold]Total[/bold]",
+            f"[bold]{total_msgs}[/bold]",
+            f"[bold]{_format_number(total_input)}[/bold]",
+            f"[bold]{_format_number(total_output)}[/bold]",
+            f"[bold]{_format_number(total_cache_w)}[/bold]",
+            f"[bold]{_format_number(total_cache_r)}[/bold]",
+            f"[bold]{format_cost(total_cost, precision=4)}[/bold]",
+        )
+
+        # Create panel for this session
+        session_panel = Panel(
+            session_table,
+            title=f"[bold]Session [{short_session_id}] - {time_range_str}[/bold]",
+            border_style="cyan",
+            expand=True,
+        )
+
+        all_items.append(session_panel)
+
+        # Add spacing between sessions (except after last one)
+        if session_idx < len(sessions) - 1:
+            all_items.append(Text(""))
+
+    # Create outer panel
+    subtitle_text = "[dim]Press [bold yellow]tab[/bold yellow] to switch mode([bright_green]Session[/bright_green]), [bold]esc[/bold] to return to daily view[/dim]"
+
+    outer_panel = Panel(
+        Group(*all_items),
+        title=f"[bold]Session+Model Detail - {title_text}",
+        subtitle=subtitle_text,
+        border_style="white",
+        expand=True,
+    )
+
+    return Group(outer_panel)
+
+
 def _create_message_detail_view(records: list[UsageRecord], target_date: str, target_hour: int, content_mode: str = "hide", view_mode_ref: dict | None = None) -> Group:
     """
     Create detailed view for messages in a specific hour.
@@ -2915,7 +3059,7 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
         records: List of usage records for the target hour
         target_date: Target date in YYYY-MM-DD format (e.g., "2025-10-15")
         target_hour: Target hour in 24-hour format (0-23)
-        content_mode: Content display mode - "hide" (no content, default), "brief" (63 chars), or "detail" (full content)
+        content_mode: Content display mode - "hide" (no content, default), "brief" (63 chars), "detail" (full content), or "session" (session+model aggregated)
         view_mode_ref: Reference dict to track last viewed message ID
 
     Returns:
@@ -2951,6 +3095,10 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
         # Only include Assistant messages (User messages have no token/cost data)
         if not record.is_user_prompt:
             sessions[record.session_id].append(record)
+
+    # If content_mode is "session", show session+model aggregated view
+    if content_mode == "session":
+        return _create_session_aggregated_view(sessions, target_date, target_hour, user_tz)
 
     # Build list of message items (each is a small table with optional content)
     message_items = []
@@ -3343,9 +3491,9 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
 
             if in_message_detail:
                 # Message detail mode - show tab to switch mode and esc to return
-                # Get current content mode ("hide", "brief", or "detail")
+                # Get current content mode ("hide", "brief", "detail", or "session")
                 content_mode = view_mode_ref.get('message_content_mode', 'hide')
-                current_mode = content_mode.capitalize()  # "Hide", "Brief", or "Detail"
+                current_mode = content_mode.capitalize()  # "Hide", "Brief", "Detail", or "Session"
 
                 footer.append("Press ", style=DIM)
                 footer.append("tab", style=f"bold {YELLOW}")

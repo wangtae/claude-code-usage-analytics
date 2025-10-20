@@ -113,6 +113,18 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 - Navigate weeks with `<` and `>` keys
 - Tab key cycles through display modes
 
+**Hourly Detail & Message View:**
+- Press `1-9` to view daily details → Press `1-9/a-o` to view hourly messages
+- Tab key cycles through **4 message display modes**:
+  - **Hide** - Message metadata only (time, model, tokens, cost)
+  - **Brief** - Metadata + 63-character content preview
+  - **Detail** - Metadata + full message content
+  - **Session** - Session+Model aggregated view with time range
+    - Groups messages by session ID
+    - Shows per-model breakdown: Messages, Input, Output, Cache W, Cache R, Cost
+    - Displays session start time - end time range
+    - Session totals for quick overview
+
 **Keyboard:** `w` to switch to this view
 
 ### 5. Monthly Mode - Project Focus
