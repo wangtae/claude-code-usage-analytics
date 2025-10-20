@@ -79,8 +79,8 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
     """
     Calculate recommended usage percentage for current session based on elapsed time.
 
-    Session limit is 5 hours. This calculates what percentage should be used
-    based on how much time has elapsed in the current 5-hour window.
+    Session limit is 5 hours (300 minutes). This calculates what percentage should be used
+    based on how many minutes have elapsed in the current 5-hour window.
 
     Args:
         session_reset_str: Session reset time string (e.g., "2pm (Asia/Seoul)")
@@ -140,13 +140,13 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
 
         # Calculate elapsed time in the 5-hour window
         elapsed = now - session_start
-        elapsed_hours = elapsed.total_seconds() / 3600
+        elapsed_minutes = elapsed.total_seconds() / 60
 
-        # Cap at 5 hours
-        elapsed_hours = min(elapsed_hours, 5)
+        # Cap at 5 hours (300 minutes)
+        elapsed_minutes = min(elapsed_minutes, 300)
 
-        # Calculate recommended percentage (linear based on elapsed time)
-        recommended_pct = (elapsed_hours / 5) * 100
+        # Calculate recommended percentage (linear based on elapsed time in minutes)
+        recommended_pct = (elapsed_minutes / 300) * 100
         return min(100, recommended_pct)
 
     except Exception:
@@ -155,23 +155,23 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
 
 def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> float:
     """
-    Calculate recommended usage percentage for current week based on elapsed hours.
+    Calculate recommended usage percentage for current week based on elapsed minutes.
 
-    Uses hour-based calculation for accuracy, since week resets can occur at any time
-    (e.g., Friday 9:59am). This provides more precise recommendations than day-based calc.
+    Uses minute-based calculation for maximum accuracy, since week resets can occur at any time
+    (e.g., Friday 9:59am). This provides the most precise recommendations.
 
     Args:
         week_reset_str: Week reset time string (e.g., "Oct 24, 10am (Asia/Seoul)")
         weekly_days: Number of days to use for calculation (from settings)
-                     Converted to hours internally (e.g., 7 days = 168 hours)
+                     Converted to minutes internally (e.g., 7 days = 10,080 minutes)
 
     Returns:
         Recommended usage percentage (0-100)
 
     Example:
         Reset: Friday 09:59, Current: Monday 14:00
-        Elapsed: 76.02 hours, Total: 168 hours (7 days)
-        Recommended: (76.02 / 168) * 100 = 45.2%
+        Elapsed: 4,561 minutes, Total: 10,080 minutes (7 days)
+        Recommended: (4,561 / 10,080) * 100 = 45.2%
     """
     from datetime import datetime, timezone as dt_timezone, timedelta
     from zoneinfo import ZoneInfo
@@ -236,15 +236,15 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
         if now >= reset_dt:
             return 0
 
-        # Calculate total hours in the period (e.g., 7 days = 168 hours)
-        total_hours = weekly_days * 24
+        # Calculate total minutes in the period (e.g., 7 days = 10,080 minutes)
+        total_minutes = weekly_days * 24 * 60
 
-        # Calculate elapsed hours (more precise than days)
+        # Calculate elapsed minutes (more precise than hours or days)
         elapsed = now - week_start
-        elapsed_hours = elapsed.total_seconds() / 3600  # seconds to hours
+        elapsed_minutes = elapsed.total_seconds() / 60  # seconds to minutes
 
-        # Calculate recommended percentage based on elapsed time
-        recommended_pct = (elapsed_hours / total_hours) * 100
+        # Calculate recommended percentage based on elapsed time in minutes
+        recommended_pct = (elapsed_minutes / total_minutes) * 100
         return min(100, recommended_pct)
 
     except Exception:
