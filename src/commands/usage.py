@@ -388,11 +388,13 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                     if view_mode_ref.get('hourly_detail_hour') is not None:
                         view_mode_ref['hourly_detail_hour'] = None
                         view_mode_ref['changed'] = True
+                        view_mode_ref['force_data_refresh'] = True  # Force data refresh when exiting
                         continue
                     # If in daily detail mode, exit to normal weekly view
                     if view_mode_ref.get('daily_detail_date'):
                         view_mode_ref['daily_detail_date'] = None
                         view_mode_ref['changed'] = True
+                        view_mode_ref['force_data_refresh'] = True  # Force data refresh when exiting
                         continue
                     # Otherwise, treat ESC as quit command
                     stop_event.set()
@@ -440,6 +442,8 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                     view_mode_ref['mode'] = VIEW_MODE_WEEKLY
                     view_mode_ref['offset'] = 0  # Reset offset when changing mode
                     view_mode_ref['changed'] = True
+                    # Force data refresh for weekly view to ensure correct week dates
+                    view_mode_ref['force_data_refresh'] = True
                 elif key == 'm':
                     view_mode_ref['mode'] = VIEW_MODE_MONTHLY
                     view_mode_ref['offset'] = 0  # Reset offset when changing mode
@@ -641,6 +645,7 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                     if view_mode_ref.get('daily_detail_date'):
                         view_mode_ref['daily_detail_date'] = None
                         view_mode_ref['changed'] = True
+                        view_mode_ref['force_data_refresh'] = True  # Force data refresh when exiting
                     # Note: ESC to quit is already handled above in the escape sequence section
 
     finally:
@@ -865,10 +870,11 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
             if view_mode_ref.get('changed', False):
                 view_mode_ref['changed'] = False
                 updated_files = get_claude_jsonl_files()
-                # Check if it's a manual refresh (r key) or just mode change
-                if view_mode_ref.get('manual_refresh', False):
+                # Check if it's a manual refresh (r key), force refresh, or just mode change
+                if view_mode_ref.get('manual_refresh', False) or view_mode_ref.get('force_data_refresh', False):
                     view_mode_ref['manual_refresh'] = False
-                    # Manual refresh: update data
+                    view_mode_ref['force_data_refresh'] = False  # Clear the flag
+                    # Manual refresh or forced refresh: update data
                     _display_dashboard(updated_files, console, skip_limits=False, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref, show_status=False)
                     last_refresh = time.time()  # Reset timer after manual refresh
                 else:
@@ -1013,10 +1019,11 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
                 # Refresh dashboard with new view mode
                 view_mode_ref['changed'] = False
                 updated_files = get_claude_jsonl_files()
-                # Check if it's a manual refresh (r key) or just mode change
-                if view_mode_ref.get('manual_refresh', False):
+                # Check if it's a manual refresh (r key), force refresh, or just mode change
+                if view_mode_ref.get('manual_refresh', False) or view_mode_ref.get('force_data_refresh', False):
                     view_mode_ref['manual_refresh'] = False
-                    # Manual refresh: update data
+                    view_mode_ref['force_data_refresh'] = False  # Clear the flag
+                    # Manual refresh or forced refresh: update data
                     _display_dashboard(updated_files, console, skip_limits=False, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref, show_status=False)
                     last_file_check = current_time  # Reset timer after manual refresh
                 else:
