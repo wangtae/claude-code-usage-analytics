@@ -486,17 +486,19 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                             view_mode_ref['offset'] = current_offset + 1
                             view_mode_ref['changed'] = True
                 elif key == '\t':  # Tab key
-                    # Check if in message detail mode (content mode rotation: hide -> brief -> detail -> hide)
+                    # Check if in message detail mode (content mode rotation: hide -> brief -> detail -> session -> hide)
                     if view_mode_ref.get('hourly_detail_hour') is not None:
                         # Get current mode (default: "hide")
                         current_mode = view_mode_ref.get('message_content_mode', 'hide')
 
-                        # Rotate: hide -> brief -> detail -> hide
+                        # Rotate: hide -> brief -> detail -> session -> hide
                         if current_mode == 'hide':
                             view_mode_ref['message_content_mode'] = 'brief'
                         elif current_mode == 'brief':
                             view_mode_ref['message_content_mode'] = 'detail'
-                        else:  # detail
+                        elif current_mode == 'detail':
+                            view_mode_ref['message_content_mode'] = 'session'
+                        else:  # session
                             view_mode_ref['message_content_mode'] = 'hide'
 
                         view_mode_ref['changed'] = True
