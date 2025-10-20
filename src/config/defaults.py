@@ -106,6 +106,8 @@ DEFAULT_COLORS = {
     "color_unfilled": "#505370",       # Grey for unfilled portion
     "color_range_low": "60",           # Low range threshold (0-60%)
     "color_range_high": "85",          # High range threshold (60-85%, 85-100%)
+    "color_recommended": "grey46",     # Recommended usage range color (more transparent)
+    "color_exceeded": "#ff4444",       # Exceeded warning color
 }
 
 #endregion
@@ -132,6 +134,7 @@ DEFAULT_PREFERENCES = {
     "anonymize_projects": "0",      # 0=off, 1=on
     "timezone": "auto",             # auto | UTC | Asia/Seoul | ...
     "exclude_haiku_messages": "1",  # 1=exclude Haiku from message output, 0=include
+    "weekly_recommended_days": "7", # Days for weekly recommended usage calculation (1-7)
 }
 
 #endregion

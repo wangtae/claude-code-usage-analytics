@@ -1309,6 +1309,30 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                     view_mode_ref['week_end_date'] = week_end_date
                     view_mode_ref['week_reset_time'] = reset_time_str
                     view_mode_ref['week_reset_day'] = reset_day_name
+
+                    # Calculate recommended usage percentage
+                    from src.storage.snapshot_db import load_user_preferences
+                    from src.config.defaults import DEFAULT_PREFERENCES
+                    from datetime import timezone as dt_timezone
+
+                    prefs = load_user_preferences()
+                    weekly_days = int(prefs.get('weekly_recommended_days',
+                                                 DEFAULT_PREFERENCES['weekly_recommended_days']))
+
+                    today = datetime.now(dt_timezone.utc).date()
+
+                    # Only calculate if we're viewing the current week
+                    if week_start_date <= today <= week_end_date:
+                        elapsed_days = (today - week_start_date).days
+                        # elapsed_days is 0 on first day, 1 on second day, etc.
+                        recommended_pct = ((elapsed_days + 1) / weekly_days) * 100
+                        recommended_pct = min(100, recommended_pct)  # Cap at 100%
+                        view_mode_ref['weekly_recommended_pct'] = recommended_pct
+                        view_mode_ref['weekly_recommended_days'] = weekly_days
+                    else:
+                        # Past or future week - no recommendation
+                        view_mode_ref['weekly_recommended_pct'] = 0
+                        view_mode_ref['weekly_recommended_days'] = weekly_days
         else:
             from datetime import timezone
 
@@ -1352,6 +1376,28 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 view_mode_ref['week_end_date'] = target_end_date
                 view_mode_ref['week_reset_time'] = None
                 view_mode_ref['week_reset_day'] = None
+
+                # Calculate recommended usage percentage (even without week reset info)
+                from src.storage.snapshot_db import load_user_preferences
+                from src.config.defaults import DEFAULT_PREFERENCES
+
+                prefs = load_user_preferences()
+                weekly_days = int(prefs.get('weekly_recommended_days',
+                                             DEFAULT_PREFERENCES['weekly_recommended_days']))
+
+                today = datetime.now(timezone.utc).astimezone().date()
+
+                # Only calculate if we're viewing the current week
+                if target_start_date <= today <= target_end_date:
+                    elapsed_days = (today - target_start_date).days
+                    recommended_pct = ((elapsed_days + 1) / weekly_days) * 100
+                    recommended_pct = min(100, recommended_pct)
+                    view_mode_ref['weekly_recommended_pct'] = recommended_pct
+                    view_mode_ref['weekly_recommended_days'] = weekly_days
+                else:
+                    # Past or future week - no recommendation
+                    view_mode_ref['weekly_recommended_pct'] = 0
+                    view_mode_ref['weekly_recommended_days'] = weekly_days
     elif view_mode == VIEW_MODE_MONTHLY:
         # Filter by month with offset
         now = datetime.now()

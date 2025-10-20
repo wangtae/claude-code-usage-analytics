@@ -38,7 +38,7 @@ def run(console: Console) -> None:
             _display_settings_menu(console, prefs, machine_name, db_path)
 
             # Wait for user input
-            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-5, 8-9, a-j[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
+            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-5, 8-9, a-k[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
 
             key = _read_key()
 
@@ -82,6 +82,9 @@ def run(console: Console) -> None:
                 _check_and_sync_data(console)
             elif key.lower() == 'j':  # Exclude Haiku Messages
                 setting_num = 16
+                _edit_setting(console, setting_num, prefs, save_user_preference)
+            elif key.lower() == 'k':  # Weekly Recommended Days
+                setting_num = 17
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'x':  # Reset to defaults
                 _reset_to_defaults(console, save_user_preference)
@@ -344,6 +347,10 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     exclude_haiku_display = "Enabled" if exclude_haiku == "1" else "Disabled"
     settings_table.add_row("[#ff8800]\\[j][/#ff8800]", "Exclude Haiku Messages", exclude_haiku_display)
 
+    # Weekly recommended days
+    weekly_days = prefs.get('weekly_recommended_days', DEFAULT_PREFERENCES['weekly_recommended_days'])
+    settings_table.add_row("[#ff8800]\\[k][/#ff8800]", "Weekly Recommended Days", weekly_days)
+
     # Empty row for spacing
     settings_table.add_row("", "", "")
 
@@ -406,6 +413,11 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     # Handle exclude haiku messages setting separately (16)
     if setting_num == 16:
         _edit_exclude_haiku_setting(console, prefs, save_func)
+        return
+
+    # Handle weekly recommended days setting separately (17)
+    if setting_num == 17:
+        _edit_weekly_days_setting(console, prefs, save_func)
         return
 
     if setting_num not in setting_map:
@@ -1204,4 +1216,58 @@ def _check_and_sync_data(console: Console) -> None:
             console.print()
 
     console.print("\n[dim]Press any key to return to settings...[/dim]", end="")
+    _read_key()
+
+
+def _edit_weekly_days_setting(console: Console, prefs: dict, save_func) -> None:
+    """
+    Edit weekly recommended days setting (17).
+
+    Args:
+        console: Rich console for rendering
+        prefs: Current preferences dictionary
+        save_func: Function to save preference
+    """
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    current = prefs.get('weekly_recommended_days', DEFAULT_PREFERENCES['weekly_recommended_days'])
+    default = DEFAULT_PREFERENCES['weekly_recommended_days']
+
+    console.print()
+    console.print(f"[bold]Edit Weekly Recommended Days[/bold]")
+    console.print(f"[dim]Current value: {current} days[/dim]")
+    console.print(f"[dim]Default value: {default} days[/dim]")
+    console.print()
+    console.print("[cyan]This setting controls how daily recommended usage is calculated:[/cyan]")
+    console.print(f"  • Daily target = (100% / {current} days) × elapsed days")
+    console.print(f"  • Example: On day 2, recommended usage = {(200 / int(current)):.1f}%")
+    console.print()
+    console.print("[dim]Enter days (1-7), 'd' for default, or press Enter to keep current:[/dim]")
+
+    try:
+        sys.stdout.write("> ")
+        sys.stdout.flush()
+        new_value = input().strip()
+
+        if new_value:
+            if new_value.lower() in ['d', 'default']:
+                from src.storage.snapshot_db import delete_user_preference
+                delete_user_preference('weekly_recommended_days')
+                console.print(f"[green]✓ Weekly Recommended Days reset to default: {default} days[/green]")
+                console.print(f"[dim]  (Using value from src/config/defaults.py)[/dim]")
+            else:
+                try:
+                    days = int(new_value)
+                    if 1 <= days <= 7:
+                        save_func('weekly_recommended_days', str(days))
+                        console.print(f"[green]✓ Weekly Recommended Days updated to {days} days[/green]")
+                        console.print(f"[dim]  Daily target = {(100 / days):.1f}% per day[/dim]")
+                    else:
+                        console.print("[red]✗ Days must be between 1 and 7[/red]")
+                except ValueError:
+                    console.print("[red]✗ Invalid number. Enter 1-7 or 'd' for default[/red]")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Input cancelled[/yellow]")
+
+    console.print("\n[dim]Press any key to continue...[/dim]")
     _read_key()

@@ -81,12 +81,21 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 
 **Key Features:**
 - Current session usage tracking (5-hour rolling window)
+- **Recommended usage indicators** - Visual guidance showing recommended usage based on elapsed time/days
 - Session reset countdown timer
 - Weekly limit monitoring with percentage bars
 - Opus-specific weekly limit tracking
 - Token breakdown by type (input/output/cache)
 - Cost estimation vs Claude Pro subscription
 - Tab key cycles through different display modes
+
+**Recommended Usage Visualization:**
+- **Session limits**: Shows recommended usage based on elapsed time in 5-hour window
+- **Weekly limits**: Shows recommended usage based on elapsed days (configurable: 1-7 days)
+- **Visual indicators**:
+  - Current usage (colored bar)
+  - Recommended range (semi-transparent gray)
+  - Exceeded portion (warning color if over recommended)
 
 **Keyboard:** `u` to switch to this view
 
@@ -96,6 +105,7 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 
 **Key Features:**
 - 7-day overview with daily statistics
+- **Recommended usage indicators** - Same visual guidance as Usage Mode for session/week/opus limits
 - Visual progress bars for each day
 - Token usage by model (Sonnet/Opus breakdown)
 - Top projects ranked by usage
@@ -170,6 +180,7 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 - Color customization (solid colors and gradient ranges)
 - Display mode preferences
 - Timezone configuration
+- **Weekly Recommended Days** - Configure daily usage target calculation (1-7 days, default: 7)
 - Backup management options
 - Database path configuration
 - Machine name customization

@@ -75,6 +75,182 @@ def _create_bar(value: int, max_value: int, width: int = BAR_WIDTH, color: str =
     return bar
 
 
+def _calculate_session_recommended_pct(session_reset_str: str) -> float:
+    """
+    Calculate recommended usage percentage for current session based on elapsed time.
+
+    Session limit is 5 hours. This calculates what percentage should be used
+    based on how much time has elapsed in the current 5-hour window.
+
+    Args:
+        session_reset_str: Session reset time string (e.g., "2pm (Asia/Seoul)")
+
+    Returns:
+        Recommended usage percentage (0-100)
+    """
+    from datetime import datetime, timezone as dt_timezone, timedelta
+    from zoneinfo import ZoneInfo
+    import re
+
+    try:
+        # Extract timezone
+        tz_match = re.search(r'\((.*?)\)', session_reset_str)
+        tz_name = tz_match.group(1) if tz_match else 'UTC'
+        reset_no_tz = session_reset_str.split(' (')[0].strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
+
+        # Parse reset time (e.g., "2pm" or "10:30am")
+        time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+        if not time_match:
+            return 0
+
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2)) if time_match.group(2) else 0
+        meridiem = time_match.group(3)
+
+        # Convert to 24-hour format
+        if meridiem == 'pm' and hour != 12:
+            hour += 12
+        elif meridiem == 'am' and hour == 12:
+            hour = 0
+
+        # Get current time in the same timezone
+        now = datetime.now(tz)
+
+        # Session resets at this time, so session started 5 hours before reset
+        # We need to find when the current session started
+        reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        # If reset time is in the future, it's the next reset
+        # Session started 5 hours before the reset
+        if reset_time > now:
+            session_start = reset_time - timedelta(hours=5)
+        else:
+            # Reset time is in the past - find next reset
+            next_reset = reset_time + timedelta(days=1)
+            session_start = next_reset - timedelta(hours=5)
+
+            # If session start is still in the future, use today's reset
+            if session_start > now:
+                session_start = reset_time - timedelta(hours=5)
+
+        # Calculate elapsed time in the 5-hour window
+        elapsed = now - session_start
+        elapsed_hours = elapsed.total_seconds() / 3600
+
+        # Cap at 5 hours
+        elapsed_hours = min(elapsed_hours, 5)
+
+        # Calculate recommended percentage (linear based on elapsed time)
+        recommended_pct = (elapsed_hours / 5) * 100
+        return min(100, recommended_pct)
+
+    except Exception:
+        return 0
+
+
+def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> float:
+    """
+    Calculate recommended usage percentage for current week based on elapsed hours.
+
+    Uses hour-based calculation for accuracy, since week resets can occur at any time
+    (e.g., Friday 9:59am). This provides more precise recommendations than day-based calc.
+
+    Args:
+        week_reset_str: Week reset time string (e.g., "Oct 24, 10am (Asia/Seoul)")
+        weekly_days: Number of days to use for calculation (from settings)
+                     Converted to hours internally (e.g., 7 days = 168 hours)
+
+    Returns:
+        Recommended usage percentage (0-100)
+
+    Example:
+        Reset: Friday 09:59, Current: Monday 14:00
+        Elapsed: 76.02 hours, Total: 168 hours (7 days)
+        Recommended: (76.02 / 168) * 100 = 45.2%
+    """
+    from datetime import datetime, timezone as dt_timezone, timedelta
+    from zoneinfo import ZoneInfo
+    import re
+
+    try:
+        # Extract timezone
+        tz_match = re.search(r'\((.*?)\)', week_reset_str)
+        tz_name = tz_match.group(1) if tz_match else 'UTC'
+        reset_no_tz = week_reset_str.split(' (')[0].strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
+
+        # Try to parse "Oct 17, 10am" format (with date)
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+        if not date_match:
+            return 0
+
+        month_name = date_match.group(1)
+        day = int(date_match.group(2))
+        hour = int(date_match.group(3))
+        minute = int(date_match.group(4)) if date_match.group(4) else 0
+        meridiem = date_match.group(5)
+
+        # Convert to 24-hour format
+        if meridiem == 'pm' and hour != 12:
+            hour += 12
+        elif meridiem == 'am' and hour == 12:
+            hour = 0
+
+        # Parse month
+        year = datetime.now(tz).year
+        month_num = datetime.strptime(month_name, '%b').month
+
+        # Create reset datetime
+        reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+
+        # Get current time
+        now = datetime.now(tz)
+
+        # If reset is in the past, it might be next year
+        if reset_dt < now:
+            # Check if adding 7 days puts us in the future
+            next_reset = reset_dt + timedelta(days=7)
+            if next_reset > now:
+                reset_dt = next_reset
+            else:
+                # Must be next year
+                reset_dt = reset_dt.replace(year=year + 1)
+
+        # Week started 7 days before reset
+        week_start = reset_dt - timedelta(days=7)
+
+        # If we're before the week start, we're looking at next week
+        if now < week_start:
+            return 0
+
+        # If we're after the reset, we're in a new week
+        if now >= reset_dt:
+            return 0
+
+        # Calculate total hours in the period (e.g., 7 days = 168 hours)
+        total_hours = weekly_days * 24
+
+        # Calculate elapsed hours (more precise than days)
+        elapsed = now - week_start
+        elapsed_hours = elapsed.total_seconds() / 3600  # seconds to hours
+
+        # Calculate recommended percentage based on elapsed time
+        recommended_pct = (elapsed_hours / total_hours) * 100
+        return min(100, recommended_pct)
+
+    except Exception:
+        return 0
+
+
 def _get_bar_color(percentage: int, color_mode: str, colors: dict) -> str:
     """
     Get color based on color mode and usage percentage.
@@ -141,6 +317,114 @@ def _create_usage_bar_with_percent(percentage: int, width: int = 50, color_mode:
     bar_text.append("█" * filled, style=bar_color)
     bar_text.append("█" * (width - filled), style=unfilled_color)
     bar_text.append(f" {percentage}%", style="bold white")
+    return bar_text
+
+
+def _create_usage_bar_with_recommended(
+    current_pct: int,
+    recommended_pct: float,
+    width: int = 50,
+    color_mode: str = "gradient",
+    colors: dict = None
+) -> Text:
+    """
+    Create a usage bar with recommended usage indicator (combined with percentage).
+    Format: ████████████▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░ 14%
+            [=current=][recommended][    unfilled     ]
+
+    Args:
+        current_pct: Current usage percentage (0-100)
+        recommended_pct: Recommended usage percentage (0-100)
+        width: Total width of bar (excluding percentage text)
+        color_mode: Color mode ("solid" or "gradient")
+        colors: Dictionary with color values
+
+    Returns:
+        Rich Text object with bar showing current, recommended, and unfilled portions
+    """
+    from src.config.defaults import DEFAULT_COLORS
+
+    if colors is None:
+        colors = DEFAULT_COLORS
+
+    # Calculate filled blocks
+    filled = int((current_pct / 100) * width)
+    recommended = int((recommended_pct / 100) * width)
+
+    # Get colors
+    bar_color = _get_bar_color(current_pct, color_mode, colors)
+    recommended_color = colors.get("color_recommended", DEFAULT_COLORS.get("color_recommended", "grey70"))
+    exceeded_color = colors.get("color_exceeded", DEFAULT_COLORS.get("color_exceeded", "#ff4444"))
+    unfilled_color = colors.get("color_unfilled", DEFAULT_COLORS['color_unfilled'])
+
+    bar_text = Text()
+
+    if current_pct <= recommended_pct:
+        # Normal: current usage <= recommended
+        bar_text.append("█" * filled, style=bar_color)
+        bar_text.append("█" * (recommended - filled), style=recommended_color)
+        bar_text.append("█" * (width - recommended), style=unfilled_color)
+    else:
+        # Exceeded: current usage > recommended
+        bar_text.append("█" * recommended, style=bar_color)
+        bar_text.append("█" * (filled - recommended), style=exceeded_color)
+        bar_text.append("█" * (width - filled), style=unfilled_color)
+
+    bar_text.append(f" {current_pct}%", style="bold white")
+    return bar_text
+
+
+def _create_usage_bar_with_recommended_separate(
+    current_pct: int,
+    recommended_pct: float,
+    width: int = 50,
+    color_mode: str = "gradient",
+    colors: dict = None
+) -> Text:
+    """
+    Create a usage bar with recommended usage indicator (percentage displayed separately).
+    Format: ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬░░░░░░░░░░░░░░░░░░░░░░
+            [=current=][recommended][  unfilled  ]
+    (Percentage is added separately by caller)
+
+    Args:
+        current_pct: Current usage percentage (0-100)
+        recommended_pct: Recommended usage percentage (0-100)
+        width: Total width of bar
+        color_mode: Color mode ("solid" or "gradient")
+        colors: Dictionary with color values
+
+    Returns:
+        Rich Text object with bar (no percentage text)
+    """
+    from src.config.defaults import DEFAULT_COLORS
+
+    if colors is None:
+        colors = DEFAULT_COLORS
+
+    # Calculate filled blocks
+    filled = int((current_pct / 100) * width)
+    recommended = int((recommended_pct / 100) * width)
+
+    # Get colors
+    bar_color = _get_bar_color(current_pct, color_mode, colors)
+    recommended_color = colors.get("color_recommended", DEFAULT_COLORS.get("color_recommended", "grey70"))
+    exceeded_color = colors.get("color_exceeded", DEFAULT_COLORS.get("color_exceeded", "#ff4444"))
+    unfilled_color = colors.get("color_unfilled", DEFAULT_COLORS['color_unfilled'])
+
+    bar_text = Text()
+
+    if current_pct <= recommended_pct:
+        # Normal: current usage <= recommended
+        bar_text.append("▬" * filled, style=bar_color)
+        bar_text.append("▬" * (recommended - filled), style=recommended_color)
+        bar_text.append("▬" * (width - recommended), style=unfilled_color)
+    else:
+        # Exceeded: current usage > recommended
+        bar_text.append("▬" * recommended, style=bar_color)
+        bar_text.append("▬" * (filled - recommended), style=exceeded_color)
+        bar_text.append("▬" * (width - filled), style=unfilled_color)
+
     return bar_text
 
 
@@ -330,6 +614,25 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
             weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
 
+            # Calculate recommended usage percentages
+            from datetime import datetime, timezone as dt_timezone
+            from src.storage.snapshot_db import load_user_preferences
+            from src.config.defaults import DEFAULT_PREFERENCES
+
+            prefs = load_user_preferences()
+            weekly_days = int(prefs.get('weekly_recommended_days',
+                                         DEFAULT_PREFERENCES['weekly_recommended_days']))
+
+            # Parse session reset time to calculate elapsed time
+            session_recommended_pct = 0
+            if limits.get('session_reset'):
+                session_recommended_pct = _calculate_session_recommended_pct(limits['session_reset'])
+
+            # Parse week reset time to calculate elapsed days
+            weekly_recommended_pct = 0
+            if limits.get('week_reset'):
+                weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
+
             # Create table structure with 3 rows per limit
             # M1/M2 modes use no padding, M3/M4 modes use reduced padding for compact display
             table_padding = (0, 1) if (is_m3_mode or is_m4_mode) else (0, 0)
@@ -340,21 +643,59 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             if is_m1_mode:
                 # Session limit (3 rows)
                 limits_table.add_row("Current session")
-                session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                # Check if recommended usage indicator should be shown for session
+                if session_recommended_pct > 0:
+                    session_bar = _create_usage_bar_with_recommended(
+                        limits["session_pct"],
+                        session_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(session_bar)
                 limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
                 limits_table.add_row("Current week (all models)")
-                week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                # Check if recommended usage indicator should be shown for week
+                if weekly_recommended_pct > 0:
+                    # Show bar with recommended usage indicator
+                    week_bar = _create_usage_bar_with_recommended(
+                        limits["week_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    # No recommendation available - use standard bar
+                    week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(week_bar)
                 limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
-                opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                # Opus uses same weekly recommended percentage as "all models"
+                if weekly_recommended_pct > 0:
+                    opus_bar = _create_usage_bar_with_recommended(
+                        limits["opus_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
@@ -367,7 +708,18 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # M2 mode: M1 style (no border) with M4 bars (percentage separated)
                 # Session limit (3 rows)
                 limits_table.add_row("Current session")
-                session_bar = _create_bar(limits["session_pct"], 100, width=bar_width, color=_get_bar_color(limits["session_pct"], color_mode, colors))
+
+                if session_recommended_pct > 0:
+                    session_bar = _create_usage_bar_with_recommended_separate(
+                        limits["session_pct"],
+                        session_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    session_bar = _create_bar(limits["session_pct"], 100, width=bar_width, color=_get_bar_color(limits["session_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
@@ -377,7 +729,21 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
                 # Week limit (3 rows)
                 limits_table.add_row("Current week (all models)")
-                week_bar = _create_bar(limits["week_pct"], 100, width=bar_width, color=_get_bar_color(limits["week_pct"], color_mode, colors))
+
+                # Check if recommended usage indicator should be shown for week
+                if weekly_recommended_pct > 0:
+                    # Show bar with recommended usage indicator
+                    week_bar = _create_usage_bar_with_recommended_separate(
+                        limits["week_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    # No recommendation available - use standard bar
+                    week_bar = _create_bar(limits["week_pct"], 100, width=bar_width, color=_get_bar_color(limits["week_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
@@ -387,7 +753,19 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
-                opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+
+                # Opus uses same weekly recommended percentage as "all models"
+                if weekly_recommended_pct > 0:
+                    opus_bar = _create_usage_bar_with_recommended_separate(
+                        limits["opus_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(opus_bar)
                 bar_text.append(f"  {limits['opus_pct']}%", style="bold white")
@@ -403,21 +781,58 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # M3 mode: dashboard style with bar+percentage combined (like M1) and panel wrapper
                 # Session limit (3 rows)
                 limits_table.add_row("Current session")
-                session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                if session_recommended_pct > 0:
+                    session_bar = _create_usage_bar_with_recommended(
+                        limits["session_pct"],
+                        session_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(session_bar)
                 limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
                 limits_table.add_row("Current week (all models)")
-                week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                # Check if recommended usage indicator should be shown for week
+                if weekly_recommended_pct > 0:
+                    # Show bar with recommended usage indicator
+                    week_bar = _create_usage_bar_with_recommended(
+                        limits["week_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    # No recommendation available - use standard bar
+                    week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(week_bar)
                 limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
-                opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+                # Opus uses same weekly recommended percentage as "all models"
+                if weekly_recommended_pct > 0:
+                    opus_bar = _create_usage_bar_with_recommended(
+                        limits["opus_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
@@ -435,7 +850,18 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # M4 mode: dashboard style with percentage separated and panel wrapper
                 # Session limit (3 rows)
                 limits_table.add_row("Current session")
-                session_bar = _create_bar(limits["session_pct"], 100, width=bar_width, color=_get_bar_color(limits["session_pct"], color_mode, colors))
+
+                if session_recommended_pct > 0:
+                    session_bar = _create_usage_bar_with_recommended_separate(
+                        limits["session_pct"],
+                        session_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    session_bar = _create_bar(limits["session_pct"], 100, width=bar_width, color=_get_bar_color(limits["session_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
@@ -445,7 +871,21 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
                 # Week limit (3 rows)
                 limits_table.add_row("Current week (all models)")
-                week_bar = _create_bar(limits["week_pct"], 100, width=bar_width, color=_get_bar_color(limits["week_pct"], color_mode, colors))
+
+                # Check if recommended usage indicator should be shown for week
+                if weekly_recommended_pct > 0:
+                    # Show bar with recommended usage indicator
+                    week_bar = _create_usage_bar_with_recommended_separate(
+                        limits["week_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    # No recommendation available - use standard bar
+                    week_bar = _create_bar(limits["week_pct"], 100, width=bar_width, color=_get_bar_color(limits["week_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
@@ -455,7 +895,19 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
-                opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+
+                # Opus uses same weekly recommended percentage as "all models"
+                if weekly_recommended_pct > 0:
+                    opus_bar = _create_usage_bar_with_recommended_separate(
+                        limits["opus_pct"],
+                        weekly_recommended_pct,
+                        width=bar_width,
+                        color_mode=color_mode,
+                        colors=colors
+                    )
+                else:
+                    opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+
                 bar_text = Text()
                 bar_text.append(opus_bar)
                 bar_text.append(f"  {limits['opus_pct']}%", style="bold white")
@@ -990,6 +1442,25 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             color_mode = view_mode_ref.get('color_mode', 'gradient') if view_mode_ref else 'gradient'
             colors = view_mode_ref.get('colors', DEFAULT_COLORS) if view_mode_ref else DEFAULT_COLORS
 
+            # Calculate recommended usage percentages
+            from datetime import datetime, timezone as dt_timezone
+            from src.storage.snapshot_db import load_user_preferences
+            from src.config.defaults import DEFAULT_PREFERENCES
+
+            prefs = load_user_preferences()
+            weekly_days = int(prefs.get('weekly_recommended_days',
+                                         DEFAULT_PREFERENCES['weekly_recommended_days']))
+
+            # Parse session reset time to calculate elapsed time
+            session_recommended_pct = 0
+            if limits.get('session_reset'):
+                session_recommended_pct = _calculate_session_recommended_pct(limits['session_reset'])
+
+            # Parse week reset time to calculate elapsed days
+            weekly_recommended_pct = 0
+            if limits.get('week_reset'):
+                weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
+
             # Calculate bar width based on terminal width (same as usage mode)
             terminal_width = console.width if console else 120
             bar_width = max(20, terminal_width - 14)
@@ -1000,21 +1471,55 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
 
             # Session limit (3 rows)
             limits_table.add_row("Current session")
-            session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+            if session_recommended_pct > 0:
+                session_bar = _create_usage_bar_with_recommended(
+                    limits["session_pct"],
+                    session_recommended_pct,
+                    width=bar_width,
+                    color_mode=color_mode,
+                    colors=colors
+                )
+            else:
+                session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
             limits_table.add_row(session_bar)
             limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Week limit (3 rows)
             limits_table.add_row("Current week (all models)")
-            week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+            if weekly_recommended_pct > 0:
+                week_bar = _create_usage_bar_with_recommended(
+                    limits["week_pct"],
+                    weekly_recommended_pct,
+                    width=bar_width,
+                    color_mode=color_mode,
+                    colors=colors
+                )
+            else:
+                week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
             limits_table.add_row(week_bar)
             limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
             limits_table.add_row("Current week (Opus)")
-            opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
+            # Opus uses same weekly recommended percentage as "all models"
+            if weekly_recommended_pct > 0:
+                opus_bar = _create_usage_bar_with_recommended(
+                    limits["opus_pct"],
+                    weekly_recommended_pct,
+                    width=bar_width,
+                    color_mode=color_mode,
+                    colors=colors
+                )
+            else:
+                opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+
             limits_table.add_row(opus_bar)
             # Only show reset info if usage > 0%
             if limits["opus_pct"] > 0:
