@@ -503,37 +503,22 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
 
                         view_mode_ref['changed'] = True
                     elif view_mode_ref['mode'] == "usage":
-                        # Cycle through 8 modes: S1 -> S2 -> S3 -> S4 -> G1 -> G2 -> G3 -> G4 -> S1
-                        # Current state: usage_display_mode (0-3) and color_mode ('solid' or 'gradient')
+                        # Cycle through 4 modes: S1 -> S2 -> S3 -> S4 -> S1
+                        # Only solid color modes, gradient modes removed
                         current_display = view_mode_ref.get('usage_display_mode', 0)
-                        current_color = view_mode_ref.get('color_mode', 'gradient')
 
-                        # Convert to 0-7 index (0-3: Solid modes, 4-7: Gradient modes)
-                        if current_color == 'solid':
-                            current_index = current_display  # 0-3
-                        else:
-                            current_index = current_display + 4  # 4-7
+                        # Increment and wrap around (0-3)
+                        new_display = (current_display + 1) % 4
 
-                        # Increment and wrap around
-                        new_index = (current_index + 1) % 8
-
-                        # Convert back to display mode and color mode
-                        if new_index < 4:
-                            new_display = new_index
-                            new_color = 'solid'
-                        else:
-                            new_display = new_index - 4
-                            new_color = 'gradient'
-
-                        # Update state
+                        # Update state (always solid color)
                         view_mode_ref['usage_display_mode'] = new_display
-                        view_mode_ref['color_mode'] = new_color
+                        view_mode_ref['color_mode'] = 'solid'
                         view_mode_ref['changed'] = True
 
                         # Save to DB
                         from src.storage.snapshot_db import save_user_preference
                         save_user_preference('usage_display_mode', str(new_display))
-                        save_user_preference('color_mode', new_color)
+                        save_user_preference('color_mode', 'solid')
                     elif view_mode_ref['mode'] == VIEW_MODE_WEEKLY:
                         # Toggle between limits and calendar week
                         current = view_mode_ref.get('weekly_display_mode', 'limits')

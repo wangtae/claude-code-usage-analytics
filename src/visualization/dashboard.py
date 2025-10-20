@@ -3469,12 +3469,11 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             usage_display_mode = view_mode_ref.get('usage_display_mode', 0) if view_mode_ref else 0
 
             # Get current color mode
-            color_mode = view_mode_ref.get('color_mode', 'gradient') if view_mode_ref else 'gradient'
+            color_mode = view_mode_ref.get('color_mode', 'solid') if view_mode_ref else 'solid'
 
-            # Build mode name: S1-S4 for Solid, G1-G4 for Gradient
-            mode_prefix = "S" if color_mode == "solid" else "G"
+            # Build mode name: S1-S4 (gradient modes removed)
             mode_number = (usage_display_mode % 4) + 1  # Convert 0-3 to 1-4
-            current_mode_name = f"{mode_prefix}{mode_number}"
+            current_mode_name = f"S{mode_number}"
 
             footer.append("Use ", style=DIM)
             footer.append("tab", style=f"bold {YELLOW}")

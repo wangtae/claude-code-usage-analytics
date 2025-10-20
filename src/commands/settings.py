@@ -38,7 +38,7 @@ def run(console: Console) -> None:
             _display_settings_menu(console, prefs, machine_name, db_path)
 
             # Wait for user input
-            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-5, 8-9, a-k[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
+            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-2, 8-9, a-d, g-k[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
 
             key = _read_key()
 
@@ -51,7 +51,7 @@ def run(console: Console) -> None:
 
             if key == '\x1b':  # ESC
                 break
-            elif key in ['1', '2', '3', '4', '5', '8', '9']:
+            elif key in ['1', '2', '8', '9']:
                 setting_num = int(key)
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key in ['6', '7']:  # Model pricing (read-only)
@@ -67,12 +67,6 @@ def run(console: Console) -> None:
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'd':  # Display Timezone
                 setting_num = 13
-                _edit_setting(console, setting_num, prefs, save_user_preference)
-            elif key.lower() == 'e':  # Color Range Low
-                setting_num = 14
-                _edit_setting(console, setting_num, prefs, save_user_preference)
-            elif key.lower() == 'f':  # Color Range High
-                setting_num = 15
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'g':  # Machine Name
                 _edit_machine_name(console)
@@ -171,8 +165,8 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     display_mode = int(prefs.get('usage_display_mode', '0'))
     status_table.add_row("Display Mode", display_mode_names[display_mode] if 0 <= display_mode < 4 else "M1")
 
-    color_mode = prefs.get('color_mode', 'gradient')
-    status_table.add_row("Color Mode", "Solid" if color_mode == "solid" else "Gradient")
+    color_mode = prefs.get('color_mode', 'solid')
+    status_table.add_row("Color Mode", "Solid")
 
     # Timezone display
     if tz_setting == 'auto':
@@ -277,21 +271,10 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
 
     # Color settings - display with actual color
     color_solid = prefs.get('color_solid', DEFAULT_COLORS['color_solid'])
-    color_gradient_low = prefs.get('color_gradient_low', DEFAULT_COLORS['color_gradient_low'])
-    color_gradient_mid = prefs.get('color_gradient_mid', DEFAULT_COLORS['color_gradient_mid'])
-    color_gradient_high = prefs.get('color_gradient_high', DEFAULT_COLORS['color_gradient_high'])
     color_unfilled = prefs.get('color_unfilled', DEFAULT_COLORS['color_unfilled'])
 
     settings_table.add_row("[#ff8800][1][/#ff8800]", "Solid Color", f"[{color_solid}]{color_solid}[/{color_solid}]")
-
-    # Color range settings
-    color_range_low = prefs.get('color_range_low', DEFAULT_COLORS.get('color_range_low', '60'))
-    color_range_high = prefs.get('color_range_high', DEFAULT_COLORS.get('color_range_high', '85'))
-
-    settings_table.add_row("[#ff8800][2][/#ff8800]", f"Gradient Low (0-{color_range_low}%)", f"[{color_gradient_low}]{color_gradient_low}[/{color_gradient_low}]")
-    settings_table.add_row("[#ff8800][3][/#ff8800]", f"Gradient Mid ({color_range_low}-{color_range_high}%)", f"[{color_gradient_mid}]{color_gradient_mid}[/{color_gradient_mid}]")
-    settings_table.add_row("[#ff8800][4][/#ff8800]", f"Gradient High ({color_range_high}-100%)", f"[{color_gradient_high}]{color_gradient_high}[/{color_gradient_high}]")
-    settings_table.add_row("[#ff8800][5][/#ff8800]", "Unfilled Color", f"[{color_unfilled}]{color_unfilled}[/{color_unfilled}]")
+    settings_table.add_row("[#ff8800][2][/#ff8800]", "Unfilled Color", f"[{color_unfilled}]{color_unfilled}[/{color_unfilled}]")
 
     # Model pricing settings (read-only - edit src/config/defaults.py to change)
     from src.storage.snapshot_db import get_model_pricing_for_settings
@@ -337,10 +320,6 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
         tz_value = f"{tz_setting} ({tz_info['abbr']})"
     settings_table.add_row("[#ff8800]\\[d][/#ff8800]", "Display Timezone", tz_value)
 
-    # Color range settings (alphabetically after a-d)
-    settings_table.add_row("[#ff8800]\\[e][/#ff8800]", "Color Range Low (%)", color_range_low)
-    settings_table.add_row("[#ff8800]\\[f][/#ff8800]", "Color Range High (%)", color_range_high)
-
     # Exclude Haiku Messages
     from src.config.defaults import DEFAULT_PREFERENCES
     exclude_haiku = prefs.get('exclude_haiku_messages', DEFAULT_PREFERENCES['exclude_haiku_messages'])
@@ -379,16 +358,9 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     """
     from src.config.defaults import DEFAULT_COLORS, DEFAULT_INTERVALS
 
-    # Get current color ranges for dynamic labels
-    color_range_low = prefs.get('color_range_low', DEFAULT_COLORS.get('color_range_low', '60'))
-    color_range_high = prefs.get('color_range_high', DEFAULT_COLORS.get('color_range_high', '85'))
-
     setting_map = {
         1: ('color_solid', 'Solid Color', DEFAULT_COLORS['color_solid']),
-        2: ('color_gradient_low', f'Gradient Low (0-{color_range_low}%)', DEFAULT_COLORS['color_gradient_low']),
-        3: ('color_gradient_mid', f'Gradient Mid ({color_range_low}-{color_range_high}%)', DEFAULT_COLORS['color_gradient_mid']),
-        4: ('color_gradient_high', f'Gradient High ({color_range_high}-100%)', DEFAULT_COLORS['color_gradient_high']),
-        5: ('color_unfilled', 'Unfilled Color', DEFAULT_COLORS['color_unfilled']),
+        2: ('color_unfilled', 'Unfilled Color', DEFAULT_COLORS['color_unfilled']),
         8: ('refresh_interval', 'Auto Refresh Interval (seconds)', DEFAULT_INTERVALS['refresh_interval']),
         9: ('watch_interval', 'File Watch Interval (seconds)', DEFAULT_INTERVALS['watch_interval']),
     }
@@ -403,11 +375,6 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     # Handle timezone setting separately (13)
     if setting_num == 13:
         _edit_timezone_setting(console, prefs, save_func)
-        return
-
-    # Handle color range settings separately (14, 15)
-    if setting_num in [14, 15]:
-        _edit_color_range_setting(console, setting_num, prefs, save_func)
         return
 
     # Handle exclude haiku messages setting separately (16)
@@ -432,7 +399,7 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     console.print(f"[dim]Default value: {default}[/dim]")
 
     # Read input in normal mode
-    if setting_num in [1, 2, 3, 4, 5]:
+    if setting_num in [1, 2]:
         # Color input
         console.print("[dim]Enter hex color (e.g., #00A7E1), 'd' for default, or press Enter to keep current:[/dim]")
         try:
@@ -899,7 +866,7 @@ def _reset_to_defaults(console: Console, save_func) -> None:
     console.print("[bold yellow]Reset All Settings to Defaults[/bold yellow]")
     console.print()
     console.print("[dim]This will reset the following settings to their default values:[/dim]")
-    console.print("[dim]  • Color settings (Solid, Gradient Low/Mid/High, Unfilled)[/dim]")
+    console.print("[dim]  • Color settings (Solid, Unfilled)[/dim]")
     console.print("[dim]  • Model Pricing (loaded from src/config/defaults.py)[/dim]")
     console.print("[dim]  • Auto Refresh Interval (30 seconds)[/dim]")
     console.print("[dim]  • File Watch Interval (60 seconds)[/dim]")
