@@ -33,8 +33,14 @@ Most features are accessed through keyboard shortcuts in the interactive dashboa
 - 📊 **Interactive Dashboard** - All features accessible via keyboard shortcuts (no complex CLI commands)
 - 🔄 **Real-time Updates** - Automatic file watching when Claude Code creates new logs
 - 📅 **Long-term Tracking** - Preserves usage data beyond Claude Code's 30-day limit
-- 🌐 **Multi-PC Sync** - Automatic cloud storage detection for seamless multi-computer tracking (OneDrive for WSL2/Windows, iCloud Drive for macOS)
-  - ⚠️ **Note**: Multi-PC sync has been tested on **WSL2 + OneDrive only**. macOS iCloud Drive support is implemented but not fully tested.
+- 🌐 **Multi-PC Sync** - Two synchronization methods:
+  - **OneDrive/iCloud** - Automatic cloud storage detection (OneDrive for WSL2/Windows, iCloud Drive for macOS)
+    - ⚠️ **Note**: Tested on **WSL2 + OneDrive only**. macOS iCloud Drive support implemented but not fully tested.
+  - **GitHub Gist** - JSON-based sync with version control and automatic backups (NEW!)
+    - ✅ Works on all platforms with GitHub account
+    - ✅ Automatic daily backups with 30-day retention
+    - ✅ Incremental sync (only new data)
+    - ✅ Safe: never modifies original `~/.claude/` files
 - 🖥️ **Per-Machine Stats** - Track usage breakdown across different computers
 
 ### View Modes (All In-Dashboard)
@@ -51,6 +57,7 @@ Access via keyboard shortcuts - no separate commands needed:
 ### This Fork's Enhancements
 
 - ✅ **Automatic Cloud Storage Detection** - OneDrive (WSL2/Windows) or iCloud Drive (macOS) with zero-config
+- ✅ **GitHub Gist Sync** - Version-controlled cloud backup with automatic rotation (see [Gist Sync Guide](docs/gist-sync-guide.md))
 - ✅ **Timezone Support** - Auto-detect system timezone with configurable settings
 - ✅ **Streamlined Codebase** - Removed unused features (hooks, status bar, export)
 - ✅ **Configuration Management** - Simple config system for database path and machine names
@@ -377,11 +384,52 @@ ccu config clear-db-path                          # Use auto-detection
 ccu config set-machine-name "Home-Desktop"        # Set friendly device name
 ccu config clear-machine-name                     # Use system hostname
 
+# GitHub Gist Sync (multi-device cloud backup)
+ccu gist setup           # Interactive setup wizard
+ccu gist push            # Upload local data to Gist
+ccu gist pull            # Download data from Gist
+ccu gist status          # Show sync status
+
 # Database management (rarely needed)
 ccu reset-db --force     # Reset database
 ```
 
 **Note**: Most users will only ever run `ccu` to open the dashboard. All settings (including database path and machine name) can be configured from the Settings menu (`s` key) inside the dashboard.
+
+### GitHub Gist Synchronization
+
+Sync your usage data across multiple devices using GitHub Gist (version-controlled cloud backup):
+
+```bash
+# 1. Setup (one-time)
+ccu gist setup
+
+# The wizard will guide you through:
+# - Creating GitHub Personal Access Token
+# - Testing token validity
+# - Initial sync to Gist
+
+# 2. Regular sync (manual)
+ccu gist push    # Upload new data to Gist
+ccu gist pull    # Download data from other machines
+
+# 3. Check status
+ccu gist status  # View sync info and Gist URL
+```
+
+**Benefits over OneDrive/iCloud:**
+- ✅ Works on all platforms (no OneDrive/iCloud required)
+- ✅ Version control (Git history of all changes)
+- ✅ Automatic daily backups (30-day retention)
+- ✅ No SQLite file corruption issues
+- ✅ Incremental sync (only new data)
+
+**Setup Requirements:**
+1. GitHub account (free)
+2. Personal Access Token with `gist` scope
+3. Run `ccu gist setup` on each machine
+
+See the [**Gist Sync Guide**](docs/gist-sync-guide.md) for complete documentation.
 
 ---
 

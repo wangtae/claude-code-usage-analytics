@@ -13,6 +13,7 @@ from src.commands import (
     reset_db,
     config_cmd,
     settings,
+    gist_cmd,
 )
 
 
@@ -107,6 +108,10 @@ def config_command(
 ):
     """Manage configuration (database path, machine name, etc)."""
     config_cmd.run(console, action, value)
+
+
+# Add gist subcommand
+app.add_typer(gist_cmd.app, name="gist", help="GitHub Gist synchronization")
 
 
 @app.command(name="settings", hidden=True)
