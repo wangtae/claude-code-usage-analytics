@@ -50,6 +50,9 @@ def run_setup_wizard(console: Console) -> bool:
         if machine_name:
             set_machine_name(machine_name)
 
+        # Mark setup as completed
+        mark_setup_completed()
+
         # Show summary
         _show_setup_summary(console, db_path, machine_name)
 
@@ -117,35 +120,46 @@ def _select_database_location(console: Console) -> Path | str | None:
             onedrive_available = True
 
     # Build options list
-    if onedrive_available:
-        options.append({
-            "key": "1",
-            "name": "OneDrive/iCloud Sync",
-            "desc": "Multi-device sync (recommended for multiple PCs)",
-            "path": onedrive_path,
-            "color": "green"
-        })
-        option_paths["1"] = onedrive_path
-
-    # Option 2: Local storage
+    # Option 1: Local storage
     local_path = Path.home() / ".claude" / "usage" / "usage_history.db"
     options.append({
-        "key": "2" if onedrive_available else "1",
+        "key": "1",
         "name": "Local Storage",
-        "desc": "Single device only (no cloud sync)",
+        "desc": "Single device only (fastest, no sync)",
         "path": local_path,
         "color": "yellow"
     })
-    option_paths["2" if onedrive_available else "1"] = local_path
+    option_paths["1"] = local_path
 
-    # Option 3: Custom path
+    # Option 2: GitHub Gist (Recommended)
+    options.append({
+        "key": "2",
+        "name": "GitHub Gist ⭐ (Recommended)",
+        "desc": "Multi-device • Version control • Backups • All platforms",
+        "path": "gist",  # Special marker
+        "color": "green"
+    })
+    option_paths["2"] = "gist"
+
+    # Option 3: OneDrive/iCloud (if available)
+    if onedrive_available:
+        options.append({
+            "key": "3",
+            "name": "OneDrive/iCloud",
+            "desc": "Multi-device sync (Windows/macOS only)",
+            "path": onedrive_path,
+            "color": "cyan"
+        })
+        option_paths["3"] = onedrive_path
+
+    # Option 4/5: Custom path
     custom_key = str(len(options) + 1)
     options.append({
         "key": custom_key,
         "name": "Custom Path",
         "desc": "Specify your own location",
         "path": None,
-        "color": "cyan"
+        "color": "dim"
     })
 
     # Display options
@@ -173,8 +187,16 @@ def _select_database_location(console: Console) -> Path | str | None:
                 console.print(key)
                 selected_path = option_paths[key]
 
+                # Handle GitHub Gist selection
+                if selected_path == "gist":
+                    gist_result = _setup_gist_sync(console)
+                    if gist_result is None:
+                        return None  # User cancelled
+                    # Return local path (Gist is for backup only)
+                    return local_path
+
                 # If OneDrive was selected, ask for confirmation
-                if key == "1" and onedrive_available:
+                if key == "3" and onedrive_available:
                     confirmed_path = _confirm_onedrive_path(console, selected_path)
                     if confirmed_path is None:
                         return None  # User cancelled
@@ -190,6 +212,155 @@ def _select_database_location(console: Console) -> Path | str | None:
         except KeyboardInterrupt:
             # Ctrl+C pressed - propagate to exit immediately
             raise
+
+
+def _setup_gist_sync(console: Console) -> bool | None:
+    """
+    Setup GitHub Gist synchronization.
+
+    Returns:
+        True if setup successful, False if skipped, None if cancelled
+    """
+    console.print()
+    console.print("[bold]GitHub Gist Sync Setup[/bold]")
+    console.print()
+    console.print("[green]Benefits:[/green]")
+    console.print("  • Works on all platforms (Linux, macOS, Windows)")
+    console.print("  • Version control via Git (full change history)")
+    console.print("  • Automatic daily backups (30-day retention)")
+    console.print("  • No SQLite corruption issues (JSON format)")
+    console.print("  • Free (Private Gists)")
+    console.print()
+
+    # Ask if user wants to setup now
+    console.print("[dim]Do you want to setup GitHub Gist sync now?[/dim]")
+    console.print("  [bold](y)[/bold] Yes, setup now")
+    console.print("  [bold](n)[/bold] Skip (can setup later with 'ccu gist setup')")
+    console.print("  [bold](ESC)[/bold] Cancel")
+    console.print()
+
+    while True:
+        try:
+            console.print("[dim]Your choice:[/dim] ", end="")
+            key = _read_key()
+
+            if key == '\x1b':  # ESC
+                console.print("Cancelled")
+                return None
+
+            if key.lower() == 'n':
+                console.print(key)
+                console.print("[yellow]Skipping Gist setup[/yellow]")
+                console.print("[dim]You can configure it later with: ccu gist setup[/dim]")
+                return False
+
+            if key.lower() == 'y':
+                console.print(key)
+                break
+
+            console.print(f"\n[red]Invalid choice. Press 'y', 'n', or ESC.[/red]\n")
+        except KeyboardInterrupt:
+            raise
+
+    # Import Gist modules
+    try:
+        from src.sync.token_manager import TokenManager
+        from src.sync.gist_client import GistClient
+        from src.sync.sync_manager import SyncManager
+    except ImportError as e:
+        console.print(f"[red]✗ Error importing Gist modules: {e}[/red]")
+        console.print("[yellow]Falling back to local storage[/yellow]")
+        return False
+
+    # Get GitHub token
+    console.print()
+    console.print("[bold]GitHub Personal Access Token[/bold]")
+    console.print("1. Go to: [cyan]https://github.com/settings/tokens[/cyan]")
+    console.print("2. Click 'Generate new token' → 'Generate new token (classic)'")
+    console.print("3. Set scope: [cyan]gist[/cyan]")
+    console.print("4. Copy the token")
+    console.print()
+
+    try:
+        sys.stdout.write("Enter your GitHub token: ")
+        sys.stdout.flush()
+        token = input().strip()
+
+        if not token:
+            console.print("[yellow]No token provided. Skipping Gist setup.[/yellow]")
+            return False
+
+    except (EOFError, KeyboardInterrupt):
+        console.print("\nCancelled")
+        return None
+
+    # Validate token
+    console.print("Validating token...", end="")
+    try:
+        client = GistClient(token)
+        if not client.test_token():
+            console.print(" [red]✗ Invalid token[/red]")
+            console.print("[yellow]Skipping Gist setup. You can retry with: ccu gist setup[/yellow]")
+            return False
+        console.print(" [green]✓ Valid[/green]")
+    except Exception as e:
+        console.print(f" [red]✗ Error: {e}[/red]")
+        console.print("[yellow]Skipping Gist setup[/yellow]")
+        return False
+
+    # Save token
+    token_manager = TokenManager()
+    token_manager.set_token(token)
+    console.print("[green]✓ Token saved[/green]")
+
+    # Ask about initial sync
+    console.print()
+    console.print("[dim]Create initial Gist backup now?[/dim]")
+    console.print("  [bold](y)[/bold] Yes, create backup")
+    console.print("  [bold](n)[/bold] No, do it later")
+    console.print()
+
+    while True:
+        try:
+            console.print("[dim]Your choice:[/dim] ", end="")
+            key = _read_key()
+
+            if key.lower() == 'n':
+                console.print(key)
+                console.print("[yellow]Skipping initial backup[/yellow]")
+                console.print("[dim]Run 'ccu gist push' when ready[/dim]")
+                return True
+
+            if key.lower() == 'y':
+                console.print(key)
+                break
+
+            console.print(f"\n[red]Invalid choice. Press 'y' or 'n'.[/red]\n")
+        except KeyboardInterrupt:
+            # Token is already saved, just skip initial sync
+            console.print("\nSkipping initial backup")
+            return True
+
+    # Perform initial sync
+    try:
+        console.print("Creating Gist and uploading data...", end="")
+        sync_manager = SyncManager()
+        stats = sync_manager.push()
+
+        console.print(" [green]✓ Done[/green]")
+        console.print(f"  Gist ID: {stats['gist_id']}")
+        console.print(f"  Records: {stats['exported_records']:,}")
+
+        # Show Gist URL
+        status = sync_manager.status()
+        if status.get("gist_url"):
+            console.print(f"  URL: {status['gist_url']}")
+
+    except Exception as e:
+        console.print(f" [red]✗ Error: {e}[/red]")
+        console.print("[yellow]Gist setup incomplete. You can retry with: ccu gist push[/yellow]")
+
+    return True
 
 
 def _confirm_onedrive_path(console: Console, detected_path: Path) -> Path | None:
