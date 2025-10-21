@@ -7,13 +7,16 @@ No external dependencies (uses requests library).
 
 import json
 import time
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 from datetime import datetime, timezone
 
-try:
-    import requests
-except ImportError:
-    requests = None  # type: ignore
+if TYPE_CHECKING:
+    import requests as requests_module
+else:
+    try:
+        import requests as requests_module
+    except ImportError:
+        requests_module = None  # type: ignore
 
 
 class GistClient:
@@ -38,7 +41,7 @@ class GistClient:
             ImportError: If requests library not installed
             ValueError: If token is empty
         """
-        if requests is None:
+        if requests_module is None:
             raise ImportError(
                 "requests library required. Install with: pip install requests"
             )
@@ -47,7 +50,7 @@ class GistClient:
             raise ValueError("GitHub token is required")
 
         self.token = token
-        self.session = requests.Session()
+        self.session = requests_module.Session()
         self.session.headers.update({
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
@@ -229,7 +232,7 @@ class GistClient:
         method: str,
         url: str,
         **kwargs: Any
-    ) -> requests.Response:
+    ) -> Any:  # returns requests.Response when available
         """
         Make HTTP request with retry logic.
 
@@ -259,7 +262,7 @@ class GistClient:
                 response.raise_for_status()
                 return response
 
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(self.RETRY_DELAY * (attempt + 1))  # Exponential backoff
                     continue
