@@ -11,17 +11,13 @@ Set Theme "Dracula"
 Set TypingSpeed 0.05s
 Set Padding 10 
 
-# Simulate VSCode terminal
-Type "# VSCode: Monitor Claude Code usage in real-time with various color themes"
-Enter
-Sleep 1s
 
 Hide
 
 # Start the program
 Type "ccu"
 Enter
-Sleep 7s
+Sleep 15s
 
 Show 
 
@@ -40,15 +36,3 @@ Sleep 2s
 # Switch views
 Tab
 Sleep 2s
-
-# Switch views
-Tab
-Sleep 2s
-
-# Switch views
-Tab
-Sleep 2s
-
-# Exit
-Type "q"
-Sleep 1s

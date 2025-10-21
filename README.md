@@ -77,7 +77,7 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 
 ### 1. Usage Mode - Real-time Limits
 
-![Usage Mode](docs/images/01-usage-mode.gif)
+![Usage Mode](docs/images/01-usage-mode.gif?1)
 
 **Key Features:**
 - Current session usage tracking (5-hour rolling window)
@@ -101,7 +101,7 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 
 ### 2. Weekly Mode - Daily Breakdown with Navigation
 
-![Weekly Mode](docs/images/02-weekly-mode.gif)
+![Weekly Mode](docs/images/02-weekly-mode.gif?1)
 
 **Key Features:**
 - 7-day overview with daily statistics

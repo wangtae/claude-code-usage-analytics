@@ -12,11 +12,10 @@ Set TypingSpeed 0.05s
 Set Padding 10 
 
 Hide
-
 # Start the program
 Type "ccu --anon"
 Enter
-Sleep 10s
+Sleep 15s
 
 # Switch views
 Type "w"
@@ -24,7 +23,7 @@ Sleep 8s
 
 Show
 Sleep 3s
-Type "1"
+Type "5"
 Sleep 5s
 
 Type "1"
@@ -36,6 +35,10 @@ Sleep 5s
 
 Tab
 Sleep 5s
+
+Tab
+Sleep 5s
+
 
 Tab
 Sleep 5s
