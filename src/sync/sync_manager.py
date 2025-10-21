@@ -81,8 +81,12 @@ class SyncManager:
         # 1. Export local data
         since_date = None if force else get_last_export_date()
 
+        # Get database path (convert to Path if string)
+        db_path_str = get_db_path()
+        db_path = Path(db_path_str) if db_path_str else None
+
         export_data = export_to_json(
-            db_path=get_db_path(),
+            db_path=db_path,
             since_date=since_date,
             include_stats=True,
         )
@@ -184,8 +188,12 @@ class SyncManager:
                 json_str = self.client.get_file_content(self.gist_id, current_file)
                 json_data = json.loads(json_str)
 
+                # Get database path (convert to Path if string)
+                db_path_str = get_db_path()
+                db_path = Path(db_path_str) if db_path_str else None
+
                 # Import to local database
-                import_stats = import_from_json(json_data, db_path=get_db_path())
+                import_stats = import_from_json(json_data, db_path=db_path)
 
                 stats["new_records"] += import_stats["new_records"]
                 stats["duplicate_records"] += import_stats["duplicate_records"]
@@ -359,8 +367,12 @@ class SyncManager:
         """
         import sqlite3
 
-        db_path = get_db_path()
-        if not db_path or not db_path.exists():
+        db_path_str = get_db_path()
+        if not db_path_str:
+            return
+
+        db_path = Path(db_path_str)
+        if not db_path.exists():
             return
 
         conn = sqlite3.connect(db_path, timeout=30.0)
