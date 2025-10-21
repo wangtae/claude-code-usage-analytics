@@ -2788,13 +2788,27 @@ def get_device_statistics(db_path: Path = DEFAULT_DB_PATH, force_refresh: bool =
             continue
 
         # Open separate connection for each DB with optimized settings
-        conn = sqlite3.connect(machine_db, timeout=30.0)
+        try:
+            conn = sqlite3.connect(machine_db, timeout=30.0)
+        except sqlite3.OperationalError as e:
+            # Handle disk I/O errors (OneDrive sync issues, corrupted files, etc.)
+            # Skip this machine and continue with others
+            import sys
+            print(f"Warning: Could not access database for {machine_name}: {e}", file=sys.stderr)
+            print(f"Skipping {machine_name} statistics. Try running: ccu reset-db --force", file=sys.stderr)
+            continue
 
         try:
             cursor = conn.cursor()
 
             # Optimize read-only queries (no need for journaling/sync overhead)
-            cursor.execute("PRAGMA query_only = ON")
+            try:
+                cursor.execute("PRAGMA query_only = ON")
+            except sqlite3.OperationalError:
+                # Database might be corrupted, skip this machine
+                import sys
+                print(f"Warning: Database corrupted for {machine_name}, skipping", file=sys.stderr)
+                continue
 
             # Single combined query - get ALL data in one shot
             # This eliminates multiple round-trips to the database

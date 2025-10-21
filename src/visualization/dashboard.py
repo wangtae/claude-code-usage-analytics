@@ -1,4 +1,5 @@
 #region Imports
+import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -487,7 +488,24 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
         if device_display_period == 'all':
             # All time - get actual data range from device statistics
-            device_stats = get_device_statistics_for_period(period='all')
+            try:
+                device_stats = get_device_statistics_for_period(period='all')
+            except sqlite3.OperationalError as e:
+                # Handle database errors gracefully
+                from rich.panel import Panel
+                from rich.text import Text
+                error_text = Text()
+                error_text.append("⚠️  Database Error\n\n", style="bold yellow")
+                error_text.append(f"Could not read device statistics: {e}\n\n", style="red")
+                error_text.append("This may be due to:\n", style="white")
+                error_text.append("  • OneDrive/iCloud sync issues\n", style="dim")
+                error_text.append("  • Corrupted database files\n", style="dim")
+                error_text.append("  • File permission problems\n\n", style="dim")
+                error_text.append("Try: ", style="white")
+                error_text.append("ccu reset-db --force", style="bold cyan")
+                console.print(Panel(error_text, border_style="red"))
+                device_stats = []
+
             if device_stats:
                 # Find the oldest and newest dates across all devices
                 all_oldest_dates = [d['oldest_date'] for d in device_stats if d.get('oldest_date')]
