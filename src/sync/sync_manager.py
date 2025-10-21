@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src.config.user_config import get_machine_name, get_db_path
+from src.sync.exceptions import ConflictError
 from src.sync.gist_client import GistClient
 from src.sync.json_export import export_to_json, get_last_export_date
 from src.sync.json_import import import_from_json, merge_multiple_exports
@@ -52,6 +53,7 @@ class SyncManager:
         self,
         force: bool = False,
         create_backup: bool = True,
+        skip_conflict_check: bool = False,
     ) -> dict[str, Any]:
         """
         Push local data to Gist (incremental).
@@ -59,6 +61,7 @@ class SyncManager:
         Args:
             force: If True, export all data (not just incremental)
             create_backup: Create backup before overwriting
+            skip_conflict_check: If True, skip conflict detection (for --force flag)
 
         Returns:
             Dictionary with push statistics
@@ -66,16 +69,18 @@ class SyncManager:
         Workflow:
             1. Export local data (incremental if not force)
             2. Download current manifest from Gist
-            3. Create backup of existing data (if requested)
-            4. Upload new data
-            5. Update manifest
-            6. Clean up old backups
+            3. Detect and resolve conflicts (unless skip_conflict_check)
+            4. Create backup of existing data (if requested)
+            5. Upload new data
+            6. Update manifest
+            7. Clean up old backups
         """
         stats = {
             "exported_records": 0,
             "backup_created": False,
             "manifest_updated": False,
             "gist_id": self.gist_id,
+            "conflicts_resolved": False,
         }
 
         # 1. Export local data
@@ -104,39 +109,51 @@ class SyncManager:
         # 3. Download current manifest
         manifest = self._download_manifest()
 
-        # 4. Create backup if requested
+        # 4. Update manifest with new data
+        manifest.add_machine(
+            machine_name=self.machine_name,
+            current_file=f"usage_data_{self.machine_name}.json",
+            total_records=export_data.get("statistics", {}).get("total_records", 0),
+            last_record_date=export_data["data_range"]["newest"],
+        )
+
+        # 5. Conflict detection and auto-merge (unless skipped)
+        if not skip_conflict_check:
+            try:
+                manifest = self._detect_and_resolve_conflict(manifest)
+                # If we got here and conflict was detected, it was resolved
+                if stats.get("conflicts_resolved"):
+                    stats["conflicts_resolved"] = True
+            except ConflictError:
+                # Re-raise conflict errors to be handled by caller
+                raise
+
+        # 6. Create backup if requested
         current_filename = f"usage_data_{self.machine_name}.json"
 
         if create_backup:
             backup_created = self._create_backup(current_filename, manifest)
             stats["backup_created"] = backup_created
 
-        # 5. Upload new data
+        # 7. Upload new data
         files_to_update = {
             current_filename: json.dumps(export_data, indent=2, ensure_ascii=False)
         }
 
-        # 6. Update manifest
-        manifest.add_machine(
-            machine_name=self.machine_name,
-            current_file=current_filename,
-            total_records=export_data.get("statistics", {}).get("total_records", 0),
-            last_record_date=export_data["data_range"]["newest"],
-        )
-
+        # 8. Add manifest to upload
         files_to_update[Manifest.FILENAME] = manifest.to_json()
 
-        # 7. Upload to Gist
+        # 9. Upload to Gist
         self.client.update_gist(self.gist_id, files_to_update)
         stats["manifest_updated"] = True
 
-        # 8. Clean up old backups
+        # 10. Clean up old backups
         old_backups = manifest.get_old_backups(self.machine_name)
         if old_backups:
             self._delete_old_backups(old_backups, manifest)
             stats["backups_deleted"] = len(old_backups)
 
-        # 9. Update local sync metadata
+        # 11. Update local sync metadata
         self._update_local_sync_metadata(export_data["export_date"])
 
         stats["status"] = "success"
@@ -404,3 +421,66 @@ class SyncManager:
 
         finally:
             conn.close()
+
+    def _detect_and_resolve_conflict(
+        self,
+        local_manifest: Manifest,
+        retry_count: int = 0
+    ) -> Manifest:
+        """
+        Detect conflicts with remote Gist and auto-merge if needed.
+
+        Args:
+            local_manifest: Local manifest prepared for push
+            retry_count: Current retry attempt (0-indexed)
+
+        Returns:
+            Merged manifest ready for push
+
+        Raises:
+            ConflictError: If conflict cannot be resolved after max retries
+
+        Strategy:
+            1. Download latest manifest from Gist
+            2. Compare timestamps
+            3. If remote is newer, merge and retry
+            4. Max retries: 3
+        """
+        MAX_RETRIES = 3
+
+        # Download latest manifest from Gist
+        try:
+            remote_manifest = self._download_manifest()
+        except Exception:
+            # If download fails, proceed with local manifest
+            # (might be first push or network issue)
+            return local_manifest
+
+        # Get timestamps for comparison
+        local_timestamp = local_manifest.get_last_updated()
+        remote_timestamp = remote_manifest.get_last_updated()
+
+        # Check if remote is newer (conflict detected)
+        if remote_manifest.is_newer_than(local_timestamp):
+            if retry_count >= MAX_RETRIES:
+                raise ConflictError(
+                    f"Cannot auto-resolve conflict after {MAX_RETRIES} retries. "
+                    "Remote Gist has newer changes from another device. "
+                    "Run 'ccu gist pull' to sync latest data, then push again. "
+                    "Or use 'ccu gist push --force' to override (may lose data)."
+                )
+
+            # Log conflict detection
+            print(f"⚠️  Conflict detected: Gist has newer changes")
+            print(f"   Local:  {local_timestamp}")
+            print(f"   Remote: {remote_timestamp}")
+            print(f"🔄 Auto-merging... (attempt {retry_count + 1}/{MAX_RETRIES})")
+
+            # Merge manifests
+            merged_manifest = local_manifest.merge_with(remote_manifest)
+
+            # Retry with merged manifest
+            return self._detect_and_resolve_conflict(merged_manifest, retry_count + 1)
+
+        # No conflict or conflict resolved
+        return local_manifest

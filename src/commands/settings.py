@@ -200,6 +200,10 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
             db_display = f"{db_path}\n[dim](auto-detect)[/dim]   [#ff8800]\\[h][/#ff8800]"
     status_table.add_row("Database Path", db_display)
 
+    # Storage Mode (new row)
+    storage_mode = _detect_storage_mode(db_path)
+    status_table.add_row("Storage Mode", storage_mode)
+
     # Data sync status
     from src.storage.snapshot_db import check_data_sync_status
     sync_status = check_data_sync_status()
@@ -232,25 +236,48 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     except Exception:
         status_table.add_row("Database Size", "[dim]Unknown[/dim]")
 
-    # Backup information
+    # Local backup information
     from src.config.user_config import get_last_backup_date
     from src.utils.backup import list_backups, get_backup_directory
     from pathlib import Path
 
     last_backup = get_last_backup_date()
-    if last_backup:
-        status_table.add_row("Last Backup", last_backup)
-    else:
-        status_table.add_row("Last Backup", "[dim]Never[/dim]")
-
-    # Count backup files
     try:
         backups = list_backups(Path(db_path))
         backup_count = len(backups)
         monthly_count = sum(1 for b in backups if b["is_monthly"])
-        status_table.add_row("Backups", f"{backup_count} total ({monthly_count} monthly)")
+
+        if last_backup:
+            local_backup_display = f"{last_backup} ({backup_count} files)"
+        else:
+            local_backup_display = f"[dim]Never[/dim] ({backup_count} files)" if backup_count > 0 else "[dim]Never[/dim]"
     except:
-        status_table.add_row("Backups", "[dim]0[/dim]")
+        if last_backup:
+            local_backup_display = last_backup
+        else:
+            local_backup_display = "[dim]Never[/dim]"
+
+    status_table.add_row("Last Local Backup", local_backup_display)
+
+    # Git Gist backup information
+    gist_info = _get_gist_backup_info()
+    if "error" not in gist_info:
+        # Format timestamp: "2025-10-21T14:32:04Z" -> "2025-10-21 14:32"
+        from datetime import datetime
+        try:
+            sync_time = datetime.fromisoformat(gist_info["last_sync"].replace("Z", "+00:00"))
+            sync_display = sync_time.strftime("%Y-%m-%d %H:%M")
+        except:
+            # Fallback: YYYY-MM-DDTHH:MM
+            sync_display = gist_info["last_sync"][:16].replace("T", " ")
+
+        records_display = f"{gist_info['total_records']:,}" if gist_info['total_records'] > 0 else "0"
+        gist_display = f"{sync_display} ({records_display} records)"
+        status_table.add_row("Last Gist Sync", gist_display)
+    elif gist_info.get("error") == "not_synced":
+        # Git Gist configured but never synced
+        status_table.add_row("Last Gist Sync", "[dim]Not synced yet[/dim]")
+    # If not_configured or failed, don't show the row (keeps UI clean)
 
     status_panel = Panel(
         status_table,
@@ -1238,3 +1265,109 @@ def _edit_weekly_days_setting(console: Console, prefs: dict, save_func) -> None:
 
     console.print("\n[dim]Press any key to continue...[/dim]")
     _read_key()
+
+
+def _detect_storage_mode(db_path: str) -> str:
+    """
+    Detect the storage/sync mode being used.
+
+    Args:
+        db_path: Path to the database file
+
+    Returns:
+        Formatted string indicating the storage mode with icon
+    """
+    from pathlib import Path
+
+    # Check for Git Gist setup
+    gist_configured = False
+    try:
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        token = token_manager.get_token()
+        gist_configured = token is not None
+    except Exception:
+        pass
+
+    # Detect cloud storage from path
+    is_onedrive = "OneDrive" in db_path
+    is_icloud = "CloudDocs" in db_path or "iCloud" in db_path
+
+    # Build storage mode string
+    # Always show "Local" as the base (DB is always stored locally)
+    modes = ["[yellow]Local[/yellow]"]
+
+    # Add cloud sync if configured
+    if is_onedrive:
+        modes.append("[green]+ OneDrive[/green]")
+    elif is_icloud:
+        modes.append("[green]+ iCloud[/green]")
+
+    # Add Gist backup if configured
+    if gist_configured:
+        modes.append("[cyan]+ Git Gist[/cyan]")
+
+    return " ".join(modes)
+
+
+# Cache for Gist status (to avoid slow API calls on every Settings refresh)
+_gist_status_cache = {"data": None, "timestamp": 0}
+
+
+def _get_gist_backup_info() -> dict:
+    """
+    Get Git Gist backup information for display in Settings.
+
+    Returns:
+        Dictionary with Gist status (may have "error" key if not configured/failed)
+    """
+    import time
+    from typing import Any, Optional
+
+    # Check cache (60 second TTL)
+    cache_ttl = 60
+    now = time.time()
+
+    if _gist_status_cache["data"] and (now - _gist_status_cache["timestamp"]) < cache_ttl:
+        return _gist_status_cache["data"]
+
+    # Fetch fresh data
+    try:
+        from src.sync.token_manager import TokenManager
+        from src.sync.sync_manager import SyncManager
+
+        # Check if token configured
+        token_manager = TokenManager()
+        if not token_manager.has_token():
+            result = {"error": "not_configured"}
+            _gist_status_cache["data"] = result
+            _gist_status_cache["timestamp"] = now
+            return result
+
+        # Get Gist status
+        sync_manager = SyncManager()
+        status = sync_manager.status()
+
+        if "last_gist_sync" in status:
+            result = {
+                "last_sync": status["last_gist_sync"],
+                "total_records": status.get("total_records_in_gist", 0),
+                "gist_url": status.get("gist_url"),
+                "total_machines": status.get("manifest", {}).get("total_machines", 0),
+                "total_backups": status.get("manifest", {}).get("total_backups", 0),
+            }
+        else:
+            result = {"error": "not_synced"}
+
+        # Update cache
+        _gist_status_cache["data"] = result
+        _gist_status_cache["timestamp"] = now
+
+        return result
+
+    except Exception as e:
+        # Silently fail - don't break Settings if Gist unavailable
+        result = {"error": "failed", "message": str(e)}
+        _gist_status_cache["data"] = result
+        _gist_status_cache["timestamp"] = now
+        return result

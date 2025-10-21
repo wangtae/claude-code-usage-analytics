@@ -34,13 +34,20 @@ Most features are accessed through keyboard shortcuts in the interactive dashboa
 - 🔄 **Real-time Updates** - Automatic file watching when Claude Code creates new logs
 - 📅 **Long-term Tracking** - Preserves usage data beyond Claude Code's 30-day limit
 - 🌐 **Multi-PC Sync** - Two synchronization methods:
-  - **OneDrive/iCloud** - Automatic cloud storage detection (OneDrive for WSL2/Windows, iCloud Drive for macOS)
-    - ⚠️ **Note**: Tested on **WSL2 + OneDrive only**. macOS iCloud Drive support implemented but not fully tested.
-  - **GitHub Gist** - JSON-based sync with version control and automatic backups (NEW!)
+  - **GitHub Gist** (RECOMMENDED) - JSON-based sync with version control and automatic backups
     - ✅ Works on all platforms with GitHub account
     - ✅ Automatic daily backups with 30-day retention
+    - ✅ Git version history (unlimited restore points)
+    - ✅ Automatic conflict resolution (v1.3.5+)
     - ✅ Incremental sync (only new data)
     - ✅ Safe: never modifies original `~/.claude/` files
+    - ✅ No SQLite corruption issues
+  - **OneDrive/iCloud** (Legacy) - Automatic cloud storage detection
+    - ⚠️ **May be deprecated in future versions**
+    - ⚠️ SQLite file corruption possible during sync
+    - ⚠️ No conflict resolution (last-write-wins)
+    - ⚠️ Limited to specific platforms (OneDrive: WSL2/Windows, iCloud: macOS)
+    - ✅ Tested on WSL2 + OneDrive only (iCloud not tested)
 - 🖥️ **Per-Machine Stats** - Track usage breakdown across different computers
 
 ### View Modes (All In-Dashboard)
