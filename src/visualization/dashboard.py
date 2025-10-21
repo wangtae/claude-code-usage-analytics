@@ -492,8 +492,6 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 device_stats = get_device_statistics_for_period(period='all')
             except sqlite3.OperationalError as e:
                 # Handle database errors gracefully
-                from rich.panel import Panel
-                from rich.text import Text
                 error_text = Text()
                 error_text.append("⚠️  Database Error\n\n", style="bold yellow")
                 error_text.append(f"Could not read device statistics: {e}\n\n", style="red")
