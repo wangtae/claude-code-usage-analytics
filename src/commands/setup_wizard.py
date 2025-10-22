@@ -257,9 +257,9 @@ def _setup_gist_sync(console: Console) -> bool | None:
 
             if key.lower() == 'n':
                 console.print(key)
-                console.print("[yellow]Skipping Gist setup[/yellow]")
-                console.print("[dim]You can configure it later with: ccu gist setup[/dim]")
-                return False
+                console.print("[yellow]Skipping Gist setup - using local storage instead[/yellow]")
+                console.print("[dim]You can add Gist backup later with: ccu gist setup[/dim]")
+                return False  # Proceed with local storage
 
             if key.lower() == 'y':
                 console.print(key)
@@ -296,8 +296,8 @@ def _setup_gist_sync(console: Console) -> bool | None:
         token = input().strip()
 
         if not token:
-            console.print("[yellow]No token provided. Skipping Gist setup.[/yellow]")
-            return False
+            console.print("[yellow]No token provided. Cannot proceed with Gist storage.[/yellow]")
+            return None  # Return to storage selection
 
     except (EOFError, KeyboardInterrupt):
         console.print("\nCancelled")
@@ -309,13 +309,13 @@ def _setup_gist_sync(console: Console) -> bool | None:
         client = GistClient(token)
         if not client.test_token():
             console.print(" [red]✗ Invalid token[/red]")
-            console.print("[yellow]Skipping Gist setup. You can retry with: ccu gist setup[/yellow]")
-            return False
+            console.print("[yellow]Cannot proceed with Gist storage. Please select a different option.[/yellow]")
+            return None  # Return to storage selection
         console.print(" [green]✓ Valid[/green]")
     except Exception as e:
         console.print(f" [red]✗ Error: {e}[/red]")
-        console.print("[yellow]Skipping Gist setup[/yellow]")
-        return False
+        console.print("[yellow]Cannot proceed with Gist storage. Please select a different option.[/yellow]")
+        return None  # Return to storage selection
 
     # Save token
     token_manager = TokenManager()
