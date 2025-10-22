@@ -77,6 +77,15 @@ def _display_program_info(console: Console, session_count: int) -> None:
         storage_mode = "Custom"
         storage_icon = "📁"
 
+    # Check for Git Gist backup
+    try:
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        if token_manager.get_token():
+            storage_mode += " + Git Gist"
+    except:
+        pass  # Gist not configured
+
     machine_name = get_machine_name()
 
     # Display info

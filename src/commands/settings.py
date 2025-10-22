@@ -20,7 +20,8 @@ def run(console: Console) -> None:
     Args:
         console: Rich console for rendering
     """
-    from src.storage.snapshot_db import load_user_preferences, save_user_preference, DEFAULT_DB_PATH
+    from src.storage.snapshot_db import load_user_preferences, save_user_preference, DEFAULT_DB_PATH, get_default_db_path
+    from src.config.user_config import get_db_path as get_custom_db_path
     import socket
 
     try:
@@ -31,8 +32,9 @@ def run(console: Console) -> None:
             # Get machine name
             machine_name = prefs.get('machine_name', '') or socket.gethostname()
 
-            # Get database path
-            db_path = str(DEFAULT_DB_PATH)
+            # Get database path (use custom if set, otherwise auto-detect)
+            custom_db = get_custom_db_path()
+            db_path = str(custom_db) if custom_db else str(get_default_db_path())
 
             # Display settings menu
             _display_settings_menu(console, prefs, machine_name, db_path)
