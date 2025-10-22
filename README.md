@@ -203,16 +203,32 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 ![Settings Mode](docs/images/09-settings-mode.gif)
 
 **Key Features:**
-- Color customization (solid colors and gradient ranges)
-- Display mode preferences
-- Timezone configuration
-- **Weekly Recommended Days** - Configure daily usage target calculation (1-7 days, default: 7)
-- Backup management options
-- Database path configuration
-- Machine name customization
-- Reset to defaults with confirmation
+- **Display Settings:**
+  - Color customization (solid colors)
+  - Auto refresh intervals
+  - File watch intervals
+- **Data & Sync:**
+  - `[g]` Machine name customization
+  - `[h]` Database path configuration
+  - `[i]` Data sync status check
+  - `[e]` **Gist Setup** - Configure GitHub token & initial sync
+  - `[f]` **Gist Sync** - Push/Pull data to/from Gist
+- **Backup & Timezone:**
+  - Auto backup settings
+  - Backup retention configuration
+  - Timezone settings
+- **Advanced:**
+  - Exclude Haiku messages option
+  - Weekly recommended days (1-7)
+  - `[p]` **Database Info** - View detailed statistics
+  - `[o]` **Reset Database** - Delete DB only (keep config)
+- **System:**
+  - `[r]` **Program Reset** - Complete reset with setup wizard
+  - `[x]` Reset to defaults
 
 **Keyboard:** `s` to open settings menu from any view
+
+**Note:** Most CLI commands are now accessible within the Settings menu for a unified experience.
 
 ---
 
@@ -392,31 +408,50 @@ ccu --help                   # Show help message
 
 ### Additional Commands
 
-Only a few commands exist outside the dashboard:
+CLI commands exist for automation and scripting, but **most are also accessible within the Settings menu (`s` key) in the dashboard:**
 
 ```bash
-# Heatmap in terminal (also accessible via 'h' in dashboard)
-ccu heatmap              # Current year
+# Heatmap in terminal
+ccu heatmap              # Current year (also: 'h' in dashboard)
 ccu heatmap --year 2024  # Specific year
 
-# Configuration
+# Configuration (also in Settings: [g] [h])
 ccu config show                                   # View current configuration
-ccu config set-db-path <path>                     # Set custom database path
-ccu config clear-db-path                          # Use auto-detection
-ccu config set-machine-name "Home-Desktop"        # Set friendly device name
-ccu config clear-machine-name                     # Use system hostname
+ccu config set-db-path <path>                     # Set custom database path → [h]
+ccu config clear-db-path                          # Use auto-detection → [h]
+ccu config set-machine-name "Home-Desktop"        # Set friendly device name → [g]
+ccu config clear-machine-name                     # Use system hostname → [g]
 
-# GitHub Gist Sync (multi-device cloud backup)
-ccu gist setup           # Interactive setup wizard
-ccu gist push            # Upload local data to Gist
-ccu gist pull            # Download data from Gist
-ccu gist status          # Show sync status
+# GitHub Gist Sync (also in Settings: [e] [f])
+ccu gist setup           # Interactive setup wizard → [e] Gist Setup
+ccu gist push            # Upload local data to Gist → [f] Gist Sync → Push
+ccu gist pull            # Download data from Gist → [f] Gist Sync → Pull
+ccu gist status          # Show sync status → [f] Gist Sync → Status
 
-# Database management (rarely needed)
-ccu reset-db --force     # Reset database
+# Program & Database Management (also in Settings: [r] [o] [p])
+ccu reset                # 프로그램 완전 재설정 → [r] Program Reset
+ccu reset --force        # 확인 없이 즉시 실행
+ccu reset-db --force     # Reset database only → [o] Reset Database
+# Database info available at → [p] Database Info
 ```
 
-**Note**: Most users will only ever run `ccu` to open the dashboard. All settings (including database path and machine name) can be configured from the Settings menu (`s` key) inside the dashboard.
+**Note**: **We recommend using the Settings menu (`s` key) for most operations** as it provides a unified, interactive experience. CLI commands are primarily for automation and scripting.
+
+#### Program Reset vs Database Reset
+
+**`ccu reset`** (전체 재설정):
+- 설정 파일 삭제 (`~/.claude/claude-goblin-mod/`)
+- Gist 토큰 파일 삭제 (파일 방식인 경우)
+- 캐시 및 임시 파일 삭제
+- 다음 실행 시 setup wizard 자동 실행
+- ✅ 데이터베이스는 보존됨
+- ✅ JSONL 원본 파일 보존됨
+- ✅ 시스템 keyring 토큰 보존됨
+
+**`ccu reset-db`** (데이터베이스만 초기화):
+- 데이터베이스 파일만 삭제
+- 설정 및 구성 유지
+- JSONL에서 데이터 재구축 필요
 
 ### GitHub Gist Synchronization
 

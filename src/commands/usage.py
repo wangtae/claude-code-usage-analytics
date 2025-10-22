@@ -43,6 +43,48 @@ VIEW_MODE_DEVICES = "devices"
 #region Functions
 
 
+def _display_program_info(console: Console, session_count: int) -> None:
+    """
+    Display program version and configuration info at startup.
+
+    Args:
+        console: Rich console for output
+        session_count: Number of JSONL session files found
+    """
+    from src.config.user_config import get_machine_name, get_db_path
+    from src.storage.snapshot_db import get_default_db_path
+    from pathlib import Path
+
+    # Get version from pyproject.toml
+    version = "1.3.6"  # Hardcoded for now, could be read from pyproject.toml
+
+    # Get storage info
+    custom_db_path = get_db_path()
+    db_path = Path(custom_db_path) if custom_db_path else get_default_db_path()
+
+    # Determine storage mode
+    db_path_str = str(db_path)
+    if "OneDrive" in db_path_str:
+        storage_mode = "OneDrive Sync"
+        storage_icon = "☁️"
+    elif "CloudDocs" in db_path_str or "iCloud" in db_path_str:
+        storage_mode = "iCloud Sync"
+        storage_icon = "☁️"
+    elif ".claude/usage" in db_path_str or ".local" in db_path_str:
+        storage_mode = "Local"
+        storage_icon = "💾"
+    else:
+        storage_mode = "Custom"
+        storage_icon = "📁"
+
+    machine_name = get_machine_name()
+
+    # Display info
+    console.print(f"[dim]Claude Code Usage Analytics v{version}[/dim]")
+    console.print(f"[dim]{storage_icon} Storage: {storage_mode} • Machine: {machine_name} • Sessions: {session_count}[/dim]")
+    console.print("[dim]Tip: Run 'ccu --help' to see all available options[/dim]\n", end="")
+
+
 def _calculate_next_reset_from_pattern(week_reset_pattern: str) -> tuple[datetime, str, str] | None:
     """
     Calculate next weekly reset time from stored pattern.
@@ -725,8 +767,8 @@ def run(console: Console, refresh: int | None = None, anon: bool = False, watch_
             )
             return
 
-        console.print(f"[dim]Found {len(jsonl_files)} session files[/dim]")
-        console.print("[dim]Tip: Run 'ccu --help' to see all available options[/dim]\n", end="")
+        # Display program info
+        _display_program_info(console, len(jsonl_files))
 
         # Choose between refresh mode (polling) or watch mode (file events)
         if refresh is not None:
