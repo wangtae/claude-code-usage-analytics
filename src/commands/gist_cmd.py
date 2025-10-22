@@ -32,8 +32,10 @@ def setup_wizard():
     token_manager = TokenManager()
     if not TokenManager.is_keyring_available():
         console.print(
-            "[yellow]⚠ Keyring library not installed[/yellow]\n"
-            "For better security, install: [cyan]pip install keyring[/cyan]\n"
+            "[yellow]⚠ Keyring 백엔드를 사용할 수 없습니다[/yellow]\n"
+            "토큰이 파일로 저장됩니다 (보안성 낮음).\n"
+            "Docker/CI 환경에서는 환경변수 사용을 권장합니다:\n"
+            "[cyan]export GITHUB_GIST_TOKEN=\"ghp_xxx\"[/cyan]\n"
         )
 
     # Get GitHub token

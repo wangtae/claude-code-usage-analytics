@@ -243,6 +243,11 @@ pipx install -e .
 ccu
 ```
 
+> [!TIP]
+> **자동 포함되는 보안 기능:**
+> 설치 시 `keyring` 라이브러리가 자동으로 포함되어 GitHub Gist 토큰을 OS 보안 저장소(Linux: GNOME Keyring, macOS: Keychain, Windows: Credential Manager)에 안전하게 보관합니다.
+> 별도 설치나 설정이 필요 없습니다!
+
 > [!NOTE]
 > **First-Time Setup Wizard**: On first run, an interactive setup wizard will help you choose:
 > - **Database location**: OneDrive/iCloud sync (multi-device) or local storage (single device)
@@ -281,6 +286,7 @@ ccu  # Works from any directory!
 - ✅ **Editable mode** - Source code changes are immediately reflected (perfect for development)
 - ✅ **Clean uninstall** - `pipx uninstall claude-goblin-mod` removes everything
 - ✅ **Recommended by Python packaging community** for CLI tools
+- ✅ **Automatic security** - `keyring` included for secure GitHub token storage
 
 ### Alternative: Local Editable Install (pip)
 
@@ -297,6 +303,9 @@ pip install -e .
 # Now you can use ccu anywhere
 ccu  # Works from any directory!
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** `pip install -e .`은 `pyproject.toml`의 모든 의존성(keyring 포함)을 자동으로 설치합니다.
 
 **Note**: On some systems (Ubuntu 24.04+), you may encounter an "externally-managed-environment" error. In this case, use pipx instead (recommended) or create a virtual environment (see next section).
 
@@ -319,12 +328,15 @@ cd claude-goblin-mod
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install in editable mode
+# Install in editable mode (includes keyring for security)
 pip install -e .
 
 # Use (while venv is active)
 ccu
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** Virtual environment에서도 keyring이 자동 설치되어 토큰을 안전하게 보관합니다.
 
 ### Alternative: Run from Source (No Install)
 
@@ -334,12 +346,15 @@ For quick testing without installation:
 git clone https://github.com/wangtae/claude-goblin-mod.git
 cd claude-goblin-mod
 
-# Install dependencies only
+# Install dependencies (includes keyring for secure token storage)
 pip install -r requirements.txt
 
 # Run directly
 python3 -m src.cli
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** `requirements.txt`에도 keyring이 포함되어 있어 모든 설치 방법에서 동일한 보안 수준을 제공합니다.
 
 ---
 
@@ -435,6 +450,69 @@ ccu gist status  # View sync info and Gist URL
 1. GitHub account (free)
 2. Personal Access Token with `gist` scope
 3. Run `ccu gist setup` on each machine
+
+#### 🔐 Token Security (완전 자동)
+
+✅ **모든 설치 방법에서 keyring이 자동 설치되어 완전 자동 보안 제공**
+
+GitHub Personal Access Token은 사용자 개입 없이 안전하게 저장됩니다:
+
+**자동 저장 방식 (우선순위):**
+
+**1. OS 보안 저장소 (기본, 자동) ⭐**
+- **Linux**: GNOME Keyring, KWallet (Secret Service API)
+- **macOS**: Keychain
+- **Windows**: Credential Manager
+- ✅ 완전 자동 - 사용자 개입 불필요
+- ✅ 암호화되어 저장
+- ✅ 다른 프로그램 접근 불가
+- ✅ 파일 시스템에 평문 노출 없음
+
+**2. 설정 파일 (자동 폴백) ⚠️**
+
+keyring이 작동하지 않는 특수 환경(Docker, Headless Linux)에서 자동 활성화:
+```
+~/.claude/gist_token.txt (권한: 0600)
+```
+- ⚠️ 경고 메시지 표시
+- 파일 권한으로 기본 보호
+- 환경변수 사용 권장 안내
+
+**3. 환경 변수 (고급/CI/CD용)**
+
+```bash
+export GITHUB_GIST_TOKEN="ghp_xxxxxxxxxxxx"
+ccu gist push
+```
+- CI/CD 파이프라인에 적합
+- 프로세스 종료 시 자동 제거
+- Docker 환경 권장 방식
+
+---
+
+**💡 사용자가 할 일:**
+1. ✅ `ccu gist setup` 실행
+2. ✅ GitHub 토큰 입력
+3. ❌ ~~keyring 설치~~ (이미 자동 설치됨!)
+4. ❌ ~~저장 방식 선택~~ (자동 처리됨!)
+
+**📍 토큰 저장 위치 확인:**
+
+```bash
+ccu gist status
+
+# 출력 예시:
+# ┌─ GitHub Token ─┐
+# │ ✓ Configured    │
+# │ Location: System keyring (SecretServiceKeyring)
+# └─────────────────┘
+```
+
+**🔒 보안 원칙:**
+- ✅ **자동**: keyring 설치되어 있으면 OS 보안 저장소에 자동 저장
+- ✅ **폴백**: keyring 작동 안 하면 자동으로 파일로 저장 (경고 표시)
+- ✅ **유연**: 환경변수로 CI/CD 환경 대응
+- ❌ **금지**: 토큰을 Git 저장소에 커밋하거나 스크립트에 하드코딩
 
 See the [**Gist Sync Guide**](docs/gist-sync-guide.md) for complete documentation.
 
@@ -674,6 +752,41 @@ ccu config set-db-path /mnt/d/OneDrive/.claude-goblin/usage_history.db
 ---
 
 ## FAQ
+
+### Security & Token Management
+
+**Q: keyring을 별도로 설치해야 하나요?**
+
+A: **아니요!** 모든 설치 방법(pipx, pip, requirements.txt)에서 keyring이 자동으로 포함됩니다. `ccu gist setup` 실행 시 자동으로 OS 보안 저장소에 토큰이 저장됩니다. 별도 설치나 설정이 필요 없습니다.
+
+**Q: keyring이 작동하지 않는 환경(Docker, Headless Linux)에서는?**
+
+A: 프로그램이 자동으로 감지하여 파일 저장으로 폴백합니다. 경고 메시지가 표시되며, 더 나은 보안을 위해 환경변수 사용을 권장합니다:
+```bash
+export GITHUB_GIST_TOKEN="ghp_xxxxxxxxxxxx"
+ccu gist push
+```
+
+**Q: 토큰이 어디에 저장되었는지 확인하려면?**
+
+A: `ccu gist status` 명령으로 확인 가능합니다.
+```bash
+ccu gist status
+
+# 출력 예시:
+# ┌─ GitHub Token ─┐
+# │ ✓ Configured    │
+# │ Location: System keyring (SecretServiceKeyring)
+# └─────────────────┘
+```
+
+**Q: 기존에 파일로 저장된 토큰을 키링으로 옮기려면?**
+
+A: keyring이 설치되어 있다면 토큰을 재설정하기만 하면 됩니다:
+```bash
+ccu gist set-token ghp_xxxxxxxxxxxx
+```
+프로그램이 자동으로 키링에 저장하고 기존 파일을 삭제합니다.
 
 ### General Questions
 
