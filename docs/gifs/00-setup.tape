@@ -22,7 +22,7 @@ Enter
 Sleep 3s
 
 # Switch views
-Type "1"
+Type "2"
 Sleep 3s
 
 # Switch views
@@ -30,9 +30,18 @@ Type "y"
 Sleep 3s
 
 # Switch views
+Type "input gist token here"
+Sleep 3s
+
+# Switch views
+Type "y"
+Sleep 30s
+
+# Switch views
 Enter
 Sleep 3s
 
 # Switch views
 Enter
-Sleep 10s
+Sleep 3s
+
