@@ -1916,12 +1916,14 @@ def _program_reset(console: Console) -> None:
         console.print("[cyan]프로그램을 다시 실행하면 Setup wizard가 시작됩니다:[/cyan]")
         console.print("[bold cyan]  ccu[/bold cyan]\n")
 
-        console.print("[dim]Enter를 눌러 프로그램을 종료하세요...[/dim]")
-        input()
-
-        # 프로그램 종료
-        import sys
-        sys.exit(0)
+        console.print("[yellow]Ctrl+C를 눌러 프로그램을 종료하세요...[/yellow]")
+        try:
+            while True:
+                input()  # Wait indefinitely until Ctrl+C
+        except KeyboardInterrupt:
+            console.print("\n[dim]프로그램을 종료합니다...[/dim]")
+            import sys
+            sys.exit(0)
 
     except Exception as e:
         console.print(f"\n[red]✗ 재설정 중 오류 발생: {e}[/red]")
