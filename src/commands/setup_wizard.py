@@ -381,11 +381,51 @@ def _setup_gist_sync(console: Console) -> bool | None:
         if status.get("gist_url"):
             console.print(f"  URL: {status['gist_url']}")
 
-    except Exception as e:
-        console.print(f" [red]✗ Error: {e}[/red]")
-        console.print("[yellow]Gist setup incomplete. You can retry with: ccu gist push[/yellow]")
+        return True
 
-    return True
+    except Exception as e:
+        console.print(f" [red]✗ Error creating Gist: {e}[/red]")
+        console.print()
+        console.print("[yellow]Failed to create initial Gist backup.[/yellow]")
+        console.print()
+        console.print("[bold]What would you like to do?[/bold]")
+        console.print("  [bold](r)[/bold] Retry creating Gist")
+        console.print("  [bold](s)[/bold] Skip for now (token is saved, retry later with 'ccu gist push')")
+        console.print("  [bold](c)[/bold] Cancel Gist setup (choose different storage)")
+        console.print()
+
+        while True:
+            try:
+                console.print("[dim]Your choice:[/dim] ", end="")
+                key = _read_key()
+
+                if key.lower() == 'r':
+                    console.print(key)
+                    console.print()
+                    # Retry - recursive call to sync section
+                    return _setup_gist_sync(console)
+
+                if key.lower() == 's':
+                    console.print(key)
+                    console.print("[yellow]Skipping initial backup. Token is saved.[/yellow]")
+                    console.print("[dim]Run 'ccu gist push' when ready[/dim]")
+                    return True
+
+                if key.lower() == 'c':
+                    console.print(key)
+                    console.print("[yellow]Cancelling Gist setup[/yellow]")
+                    # Delete saved token
+                    try:
+                        token_manager = TokenManager()
+                        token_manager.delete_token()
+                    except:
+                        pass
+                    return None  # Cancel - return to storage selection
+
+                console.print(f"\n[red]Invalid choice. Press 'r', 's', or 'c'.[/red]\n")
+            except KeyboardInterrupt:
+                console.print("\nCancelled")
+                return None
 
 
 def _confirm_onedrive_path(console: Console, detected_path: Path) -> Path | None:
