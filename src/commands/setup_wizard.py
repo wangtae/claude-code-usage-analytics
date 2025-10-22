@@ -292,9 +292,8 @@ def _setup_gist_sync(console: Console) -> bool | None:
     console.print()
 
     try:
-        sys.stdout.write("Enter your GitHub token: ")
-        sys.stdout.flush()
-        token = input().strip()
+        import getpass
+        token = getpass.getpass("Enter your GitHub token: ").strip()
 
         if not token:
             console.print("[yellow]No token provided. Cannot proceed with Gist storage.[/yellow]")
