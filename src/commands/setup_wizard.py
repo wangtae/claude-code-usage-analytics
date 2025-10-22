@@ -335,8 +335,27 @@ def _setup_gist_sync(console: Console) -> bool | None:
     token_manager = TokenManager()
     token_manager.set_token(token)
     storage_location = token_manager.get_storage_location()
-    console.print(f"[green]✓ Token saved securely[/green]")
+    console.print(f"[green]✓ Token saved[/green]")
     console.print(f"[dim]  Storage: {storage_location}[/dim]")
+
+    # Show security information based on storage method
+    import platform
+    if "keyring" in storage_location.lower():
+        console.print("[green]  ✓ Encrypted by your system[/green]")
+    else:
+        # File storage - show security notice
+        console.print()
+        console.print("[yellow]ℹ️  Token Security Notice:[/yellow]")
+        console.print("[dim]  • Token is stored in file with permissions 600 (owner-only access)[/dim]")
+        console.print("[dim]  • This is secure for personal use on single-user systems[/dim]")
+
+        # Platform-specific advice
+        if platform.system() == "Linux":
+            console.print()
+            console.print("[dim]  💡 For enhanced security (OS-level encryption), you can install Secret Service:[/dim]")
+            console.print("[dim]     sudo apt install gnome-keyring libsecret-1-0[/dim]")
+            console.print("[dim]     Then reinstall: pipx reinstall claude-code-usage-analytics[/dim]")
+            console.print("[dim]     Note: May not work properly in WSL2 without GUI[/dim]")
 
     # Ask about initial sync
     console.print()

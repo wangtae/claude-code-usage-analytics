@@ -486,32 +486,30 @@ ccu gist status  # View sync info and Gist URL
 2. Personal Access Token with `gist` scope
 3. Run `ccu gist setup` on each machine
 
-#### 🔐 Token Security (완전 자동)
+#### 🔐 Token Security
 
-✅ **모든 설치 방법에서 keyring이 자동 설치되어 완전 자동 보안 제공**
+GitHub Personal Access Token은 3단계 우선순위로 자동 저장됩니다:
 
-GitHub Personal Access Token은 사용자 개입 없이 안전하게 저장됩니다:
-
-**자동 저장 방식 (우선순위):**
-
-**1. OS 보안 저장소 (기본, 자동) ⭐**
-- **Linux**: GNOME Keyring, KWallet (Secret Service API)
-- **macOS**: Keychain
-- **Windows**: Credential Manager
-- ✅ 완전 자동 - 사용자 개입 불필요
-- ✅ 암호화되어 저장
+**1. OS 보안 저장소 (최우선, 암호화) ⭐**
+- **macOS**: Keychain (자동 작동)
+- **Windows**: Credential Manager (자동 작동)
+- **Linux**: Secret Service (추가 설치 필요)
+- ✅ OS-level 암호화
 - ✅ 다른 프로그램 접근 불가
 - ✅ 파일 시스템에 평문 노출 없음
 
-**2. 설정 파일 (자동 폴백) ⚠️**
+**2. 파일 저장 (자동 폴백, 권한 600) ⚠️**
 
-keyring이 작동하지 않는 특수 환경(Docker, Headless Linux)에서 자동 활성화:
+Keyring이 없는 환경에서 자동 활성화:
 ```
-~/.claude/gist_token.txt (권한: 0600)
+파일: ~/.claude/gist_token.txt
+권한: 600 (본인만 읽기/쓰기)
+환경: WSL2, Docker, Headless Linux
 ```
-- ⚠️ 경고 메시지 표시
-- 파일 권한으로 기본 보호
-- 환경변수 사용 권장 안내
+- ⚠️ Setup 시 보안 안내 표시
+- ✅ 파일 권한으로 기본 보호
+- ✅ 일반적인 개인 사용에는 충분히 안전
+- 💡 원한다면 Secret Service 설치 가능 (아래 참조)
 
 **3. 환경 변수 (고급/CI/CD용)**
 
@@ -794,13 +792,35 @@ ccu config set-db-path /mnt/d/OneDrive/.claude-goblin/usage_history.db
 
 A: **아니요!** 모든 설치 방법(pipx, pip, requirements.txt)에서 keyring이 자동으로 포함됩니다. `ccu gist setup` 실행 시 자동으로 OS 보안 저장소에 토큰이 저장됩니다. 별도 설치나 설정이 필요 없습니다.
 
-**Q: keyring이 작동하지 않는 환경(Docker, Headless Linux)에서는?**
+**Q: WSL2/Linux에서 "No recommended backend" warning이 나옵니다**
 
-A: 프로그램이 자동으로 감지하여 파일 저장으로 폴백합니다. 경고 메시지가 표시되며, 더 나은 보안을 위해 환경변수 사용을 권장합니다:
+A: Linux/WSL2에는 기본적으로 keyring backend가 없어서 토큰이 파일로 저장됩니다 (`~/.claude/gist_token.txt`, 권한 600). 일반적인 개인 사용에는 충분히 안전하지만, OS-level 암호화를 원한다면:
+
+**옵션 1: 그냥 사용 (권장)**
+- 파일 권한 600으로 충분히 안전
+- 추가 작업 불필요
+
+**옵션 2: Secret Service 설치 (선택)**
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install gnome-keyring libsecret-1-0
+
+# 프로그램 재설치
+pipx reinstall claude-code-usage-analytics
+
+# 토큰 재설정 (자동으로 keyring에 저장됨)
+ccu gist setup
+```
+
+⚠️ **WSL2 주의사항**: GUI가 없는 WSL2에서는 gnome-keyring이 제대로 작동하지 않을 수 있습니다. 파일 저장 방식을 그대로 사용하는 것을 권장합니다.
+
+**옵션 3: 환경 변수 사용 (고급)**
 ```bash
 export GITHUB_GIST_TOKEN="ghp_xxxxxxxxxxxx"
 ccu gist push
 ```
+재부팅 시 사라지므로 매번 설정 필요
 
 **Q: 토큰이 어디에 저장되었는지 확인하려면?**
 
