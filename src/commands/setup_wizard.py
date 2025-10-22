@@ -552,6 +552,16 @@ def _configure_machine_name(console: Console) -> str | None:
         sys.stdout.flush()
         name = input().strip()
 
+        # Validation: Detect if user accidentally pasted a GitHub token
+        if name.startswith("ghp_") or name.startswith("github_pat_"):
+            console.print()
+            console.print("[red]✗ Error: This looks like a GitHub token, not a machine name![/red]")
+            console.print("[yellow]GitHub tokens should only be entered during Gist setup, not here.[/yellow]")
+            console.print()
+            console.print("[dim]Press Enter to retry or Ctrl+C to cancel...[/dim]")
+            input()
+            return _configure_machine_name(console)  # Retry
+
         if name:
             console.print(f"✓ Machine name: {name}")
             return name
