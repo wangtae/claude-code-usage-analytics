@@ -47,7 +47,8 @@ def run_setup_wizard(console: Console) -> bool:
         if db_path != "auto":
             set_db_path(str(db_path))
 
-        if machine_name:
+        # Always set machine name (empty string means use hostname)
+        if machine_name is not None:
             set_machine_name(machine_name)
 
         # Mark setup as completed
