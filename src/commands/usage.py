@@ -56,7 +56,7 @@ def _display_program_info(console: Console, session_count: int) -> None:
     from pathlib import Path
 
     # Get version from pyproject.toml
-    version = "1.3.6"  # Hardcoded for now, could be read from pyproject.toml
+    version = "1.3.7"  # Hardcoded for now, could be read from pyproject.toml
 
     # Get storage info
     custom_db_path = get_db_path()
