@@ -1441,8 +1441,8 @@ def _gist_setup(console: Console) -> None:
 
         if not token:
             console.print("[yellow]취소되었습니다.[/yellow]")
-            console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-            _read_key()
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
             return
 
         # Validate token
@@ -1451,14 +1451,14 @@ def _gist_setup(console: Console) -> None:
             client = GistClient(token)
             if not client.test_token():
                 console.print(" [red]✗ 유효하지 않은 토큰[/red]")
-                console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-                _read_key()
+                console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+                input()
                 return
             console.print(" [green]✓ 유효함[/green]")
         except Exception as e:
             console.print(f" [red]✗ 오류: {e}[/red]")
-            console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-            _read_key()
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
             return
 
         # Save token
@@ -1489,18 +1489,18 @@ def _gist_setup(console: Console) -> None:
                 console.print(f"\n[red]✗ 동기화 실패: {e}[/red]")
 
         console.print("\n[green]✓ Gist 설정 완료![/green]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
     except ImportError:
         console.print("[red]✗ Gist 모듈을 불러올 수 없습니다.[/red]")
         console.print("[dim]Gist 기능이 설치되어 있는지 확인하세요.[/dim]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
     except Exception as e:
         console.print(f"[red]✗ 오류 발생: {e}[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
 
 def _gist_sync_menu(console: Console) -> None:
@@ -1522,8 +1522,8 @@ def _gist_sync_menu(console: Console) -> None:
         if not token_manager.get_token():
             console.print("[yellow]⚠ GitHub token이 설정되지 않았습니다.[/yellow]")
             console.print("[dim]먼저 [e] Gist Setup을 실행하세요.[/dim]")
-            console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-            _read_key()
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
             return
 
         # Show sync menu
@@ -1580,17 +1580,17 @@ def _gist_sync_menu(console: Console) -> None:
         else:
             console.print("\n[yellow]잘못된 선택입니다.[/yellow]")
 
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
     except ImportError:
         console.print("[red]✗ Gist 모듈을 불러올 수 없습니다.[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
     except Exception as e:
         console.print(f"[red]✗ 오류 발생: {e}[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
 
 def _show_database_info(console: Console) -> None:
@@ -1612,8 +1612,8 @@ def _show_database_info(console: Console) -> None:
         if not db_path.exists():
             console.print("[yellow]데이터베이스 파일이 존재하지 않습니다.[/yellow]")
             console.print(f"[dim]경로: {db_path}[/dim]")
-            console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-            _read_key()
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
             return
 
         # Get database stats
@@ -1659,13 +1659,13 @@ def _show_database_info(console: Console) -> None:
 
         console.print(Panel(info_table, title="[bold]Database Statistics", border_style="cyan"))
 
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
     except Exception as e:
         console.print(f"[red]✗ 오류 발생: {e}[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
 
 def _reset_database(console: Console) -> None:
@@ -1734,8 +1734,8 @@ def _reset_database(console: Console) -> None:
 
     if confirmation != 'yes':
         console.print("[yellow]취소되었습니다.[/yellow]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
         return
 
     # Reset database
@@ -1781,13 +1781,13 @@ def _reset_database(console: Console) -> None:
         console.print("\n[bold green]✓ 재설정 완료![/bold green]")
         console.print("[dim]다음 실행 시 JSONL 파일에서 데이터가 자동으로 재구축됩니다.[/dim]")
 
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
     except Exception as e:
         console.print(f"\n[red]✗ 오류 발생: {e}[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
 
 
 def _program_reset(console: Console) -> None:
@@ -1884,8 +1884,8 @@ def _program_reset(console: Console) -> None:
 
     if confirmation != 'yes':
         console.print("[yellow]재설정이 취소되었습니다.[/yellow]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
         return
 
     # 재설정 실행
@@ -1916,9 +1916,8 @@ def _program_reset(console: Console) -> None:
         console.print("[cyan]프로그램을 다시 실행하면 Setup wizard가 시작됩니다:[/cyan]")
         console.print("[bold cyan]  ccu[/bold cyan]\n")
 
-        console.print("[dim]아무 키나 누르면 프로그램이 종료됩니다...[/dim]", end="")
-        _read_key()
-        console.print()  # Newline after key press
+        console.print("[dim]Enter를 눌러 프로그램을 종료하세요...[/dim]")
+        input()
 
         # 프로그램 종료
         import sys
@@ -1926,5 +1925,5 @@ def _program_reset(console: Console) -> None:
 
     except Exception as e:
         console.print(f"\n[red]✗ 재설정 중 오류 발생: {e}[/red]")
-        console.print("\n[dim]아무 키나 누르세요...[/dim]", end="")
-        _read_key()
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
