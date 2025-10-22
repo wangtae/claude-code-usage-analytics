@@ -312,6 +312,20 @@ def _setup_gist_sync(console: Console) -> bool | None:
             console.print("[yellow]Cannot proceed with Gist storage. Please select a different option.[/yellow]")
             return None  # Return to storage selection
         console.print(" [green]✓ Valid[/green]")
+    except ImportError as e:
+        console.print(f" [red]✗ Missing dependency[/red]")
+        console.print()
+        console.print("[yellow]The 'requests' library is required for GitHub Gist sync.[/yellow]")
+        console.print()
+        console.print("[bold]Please reinstall the program with dependencies:[/bold]")
+        console.print("  [cyan]pipx uninstall claude-code-usage-analytics[/cyan]")
+        console.print("  [cyan]pipx install -e .[/cyan]")
+        console.print()
+        console.print("  [dim]or use pip instead:[/dim]")
+        console.print("  [cyan]pip install -e . --force-reinstall[/cyan]")
+        console.print()
+        console.print("[dim]Then run 'ccu' again to complete setup.[/dim]")
+        return None  # Return to storage selection
     except Exception as e:
         console.print(f" [red]✗ Error: {e}[/red]")
         console.print("[yellow]Cannot proceed with Gist storage. Please select a different option.[/yellow]")
