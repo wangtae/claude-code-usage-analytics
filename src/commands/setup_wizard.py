@@ -191,7 +191,9 @@ def _select_database_location(console: Console) -> Path | str | None:
                 if selected_path == "gist":
                     gist_result = _setup_gist_sync(console)
                     if gist_result is None:
-                        return None  # User cancelled
+                        # User cancelled Gist setup - return to storage selection
+                        console.print("[yellow]Gist setup cancelled. Please select a different storage option.[/yellow]\n")
+                        return _select_database_location(console)  # Recursive call to restart selection
                     # Return local path (Gist is for backup only)
                     return local_path
 
