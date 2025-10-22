@@ -231,6 +231,11 @@ def _setup_gist_sync(console: Console) -> bool | None:
     console.print("  • No SQLite corruption issues (JSON format)")
     console.print("  • Free (Private Gists)")
     console.print()
+    console.print("[cyan]Security:[/cyan]")
+    console.print("  • Your GitHub token is automatically stored in OS keyring")
+    console.print("  • Tokens are encrypted by your system (macOS Keychain, Windows Credential Manager, Linux Secret Service)")
+    console.print("  • Fallback to secure file storage (permissions 600) if keyring unavailable")
+    console.print()
 
     # Ask if user wants to setup now
     console.print("[dim]Do you want to setup GitHub Gist sync now?[/dim]")
@@ -280,6 +285,8 @@ def _setup_gist_sync(console: Console) -> bool | None:
     console.print("3. Set scope: [cyan]gist[/cyan]")
     console.print("4. Copy the token")
     console.print()
+    console.print("[dim]🔐 Your token will be securely stored in your system's keyring[/dim]")
+    console.print()
 
     try:
         sys.stdout.write("Enter your GitHub token: ")
@@ -311,7 +318,9 @@ def _setup_gist_sync(console: Console) -> bool | None:
     # Save token
     token_manager = TokenManager()
     token_manager.set_token(token)
-    console.print("[green]✓ Token saved[/green]")
+    storage_location = token_manager.get_storage_location()
+    console.print(f"[green]✓ Token saved securely[/green]")
+    console.print(f"[dim]  Storage: {storage_location}[/dim]")
 
     # Ask about initial sync
     console.print()
