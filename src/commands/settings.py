@@ -163,16 +163,8 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     status_table.add_column("Value", style="cyan", justify="left")
 
     # Program version
-    try:
-        import tomllib
-        from pathlib import Path
-        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
-        with open(pyproject_path, "rb") as f:
-            pyproject_data = tomllib.load(f)
-            version = pyproject_data.get("project", {}).get("version", "Unknown")
-    except Exception:
-        version = "0.2.0"  # Fallback version
-
+    from src.utils._system import get_version
+    version = get_version()
     status_table.add_row("Program Version", version)
 
     display_mode_names = ["M1 (simple, bar+%)", "M2 (simple, bar %)", "M3 (panel, bar+%)", "M4 (panel, bar %)"]

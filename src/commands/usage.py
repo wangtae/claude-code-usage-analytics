@@ -53,10 +53,11 @@ def _display_program_info(console: Console, session_count: int) -> None:
     """
     from src.config.user_config import get_machine_name, get_db_path
     from src.storage.snapshot_db import get_default_db_path
+    from src.utils._system import get_version
     from pathlib import Path
 
     # Get version from pyproject.toml
-    version = "1.3.7"  # Hardcoded for now, could be read from pyproject.toml
+    version = get_version()
 
     # Get storage info
     custom_db_path = get_db_path()
