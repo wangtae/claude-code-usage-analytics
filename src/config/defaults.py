@@ -99,15 +99,20 @@ SETTINGS_MODEL_GROUPS = [
 #region Color Defaults
 
 DEFAULT_COLORS = {
-    "color_solid": "#B1B9f9",          # Bright blue for solid mode
-    "color_gradient_low": "#B1B9f9",   # Blue for 0-60%
-    "color_gradient_mid": "#FFC10C",   # Yellow for 60-85%
-    "color_gradient_high": "#FF1744",  # Red for 85-100%
+    # Solid mode colors (single color display)
+    "color_solid": "#B1B9f9",          # Bright blue for progress bars
     "color_unfilled": "#505370",       # Grey for unfilled portion
-    "color_range_low": "60",           # Low range threshold (0-60%)
-    "color_range_high": "85",          # High range threshold (60-85%, 85-100%)
-    "color_recommended": "grey46",     # Recommended usage range color (more transparent)
-    "color_exceeded": "#ff4444",       # Exceeded warning color
+
+    # Recommended usage indicator colors
+    "color_recommended": "grey46",     # Recommended usage range color (dimmed)
+    "color_exceeded": "#ff4444",       # Exceeded warning color (red)
+
+    # Legacy gradient colors (kept for backward compatibility, not used in UI)
+    "color_gradient_low": "#B1B9f9",   # Blue for 0-60% (legacy)
+    "color_gradient_mid": "#FFC10C",   # Yellow for 60-85% (legacy)
+    "color_gradient_high": "#FF1744",  # Red for 85-100% (legacy)
+    "color_range_low": "60",           # Low range threshold (legacy)
+    "color_range_high": "85",          # High range threshold (legacy)
 }
 
 #endregion
@@ -127,7 +132,7 @@ DEFAULT_INTERVALS = {
 
 DEFAULT_PREFERENCES = {
     "usage_display_mode": "0",      # M1=0, M2=1, M3=2, M4=3
-    "color_mode": "gradient",       # solid | gradient
+    "color_mode": "solid",          # solid mode only (gradient removed)
     "tracking_mode": "both",        # both | usage | limits
     "machine_name": "",             # custom name or empty (auto-detect)
     "db_path": "",                  # custom path or empty (auto-detect)
