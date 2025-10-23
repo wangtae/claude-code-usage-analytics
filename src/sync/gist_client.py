@@ -217,9 +217,10 @@ class GistClient:
 
         file_data = files[filename]
         content = file_data.get("content")
+        is_truncated = file_data.get("truncated", False)
 
-        if content is None:
-            # Content not in response (truncated), fetch raw URL
+        # If file is truncated or content is None/empty, fetch from raw URL
+        if is_truncated or not content:
             raw_url = file_data.get("raw_url")
             if raw_url:
                 response = self._request("GET", raw_url)

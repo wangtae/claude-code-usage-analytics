@@ -2810,25 +2810,31 @@ def get_device_statistics(db_path: Path = DEFAULT_DB_PATH, force_refresh: bool =
                 print(f"Warning: Database corrupted for {machine_name}, skipping", file=sys.stderr)
                 continue
 
-            # Single combined query - get ALL data in one shot
-            # This eliminates multiple round-trips to the database
+            # Check if device_monthly_stats has any data
             cursor.execute("""
-                WITH monthly_agg AS (
-                    SELECT
-                        COALESCE(SUM(total_records), 0) as total_records,
-                        COALESCE(SUM(total_sessions), 0) as total_sessions,
-                        COALESCE(SUM(total_messages), 0) as total_messages,
-                        COALESCE(SUM(total_tokens), 0) as total_tokens,
-                        COALESCE(SUM(input_tokens), 0) as input_tokens,
-                        COALESCE(SUM(output_tokens), 0) as output_tokens,
-                        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
-                        COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-                        COALESCE(SUM(total_cost), 0.0) as total_cost,
-                        MIN(oldest_date) as oldest_date,
-                        MAX(newest_date) as newest_date
-                    FROM device_monthly_stats
-                    WHERE machine_name = ?
-                ),
+                SELECT COUNT(*) FROM device_monthly_stats WHERE machine_name = ?
+            """, (machine_name,))
+            has_monthly_stats = cursor.fetchone()[0] > 0
+
+            if has_monthly_stats:
+                # Use optimized query with device_monthly_stats
+                cursor.execute("""
+                    WITH monthly_agg AS (
+                        SELECT
+                            COALESCE(SUM(total_records), 0) as total_records,
+                            COALESCE(SUM(total_sessions), 0) as total_sessions,
+                            COALESCE(SUM(total_messages), 0) as total_messages,
+                            COALESCE(SUM(total_tokens), 0) as total_tokens,
+                            COALESCE(SUM(input_tokens), 0) as input_tokens,
+                            COALESCE(SUM(output_tokens), 0) as output_tokens,
+                            COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                            COALESCE(SUM(total_cost), 0.0) as total_cost,
+                            MIN(oldest_date) as oldest_date,
+                            MAX(newest_date) as newest_date
+                        FROM device_monthly_stats
+                        WHERE machine_name = ?
+                    ),
                 current_month_agg AS (
                     SELECT
                         COUNT(*) as total_records,
@@ -2864,7 +2870,30 @@ def get_device_statistics(db_path: Path = DEFAULT_DB_PATH, force_refresh: bool =
                     MIN(m.oldest_date, c.oldest_date) as oldest_date,
                     MAX(m.newest_date, c.newest_date) as newest_date
                 FROM monthly_agg m, current_month_agg c
-            """, (machine_name, current_month))
+                """, (machine_name, current_month))
+            else:
+                # No device_monthly_stats - calculate everything from usage_records
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_records,
+                        COUNT(DISTINCT session_id) as total_sessions,
+                        COUNT(CASE WHEN message_type = 'assistant' THEN 1 END) as total_messages,
+                        COALESCE(SUM(ur.total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(ur.input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(ur.output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(ur.cache_creation_tokens), 0) as cache_creation_tokens,
+                        COALESCE(SUM(ur.cache_read_tokens), 0) as cache_read_tokens,
+                        COALESCE(SUM(
+                            (ur.input_tokens / 1000000.0) * COALESCE(mp.input_price_per_mtok, 0) +
+                            (ur.output_tokens / 1000000.0) * COALESCE(mp.output_price_per_mtok, 0) +
+                            (ur.cache_creation_tokens / 1000000.0) * COALESCE(mp.cache_write_price_per_mtok, 0) +
+                            (ur.cache_read_tokens / 1000000.0) * COALESCE(mp.cache_read_price_per_mtok, 0)
+                        ), 0.0) as total_cost,
+                        MIN(ur.date) as oldest_date,
+                        MAX(ur.date) as newest_date
+                    FROM usage_records ur
+                    LEFT JOIN model_pricing mp ON ur.model = mp.model_name
+                """)
 
             row = cursor.fetchone()
 

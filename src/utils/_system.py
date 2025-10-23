@@ -32,6 +32,23 @@ def open_file(file_path: Path) -> None:
         pass  # Silently fail if opening doesn't work
 
 
+def get_version() -> str:
+    """
+    Get version from pyproject.toml.
+
+    Returns:
+        Version string (e.g., "1.3.8") or "Unknown" if not found
+    """
+    try:
+        import tomllib
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomllib.load(f)
+            return pyproject_data.get("project", {}).get("version", "Unknown")
+    except Exception:
+        return "Unknown"
+
+
 def get_sound_command(sound_name: str) -> Optional[str]:
     """
     Get the command to play a sound (cross-platform).

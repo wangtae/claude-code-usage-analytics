@@ -20,7 +20,8 @@ def run(console: Console) -> None:
     Args:
         console: Rich console for rendering
     """
-    from src.storage.snapshot_db import load_user_preferences, save_user_preference, DEFAULT_DB_PATH
+    from src.storage.snapshot_db import load_user_preferences, save_user_preference, DEFAULT_DB_PATH, get_default_db_path
+    from src.config.user_config import get_db_path as get_custom_db_path
     import socket
 
     try:
@@ -31,14 +32,15 @@ def run(console: Console) -> None:
             # Get machine name
             machine_name = prefs.get('machine_name', '') or socket.gethostname()
 
-            # Get database path
-            db_path = str(DEFAULT_DB_PATH)
+            # Get database path (use custom if set, otherwise auto-detect)
+            custom_db = get_custom_db_path()
+            db_path = str(custom_db) if custom_db else str(get_default_db_path())
 
             # Display settings menu
             _display_settings_menu(console, prefs, machine_name, db_path)
 
             # Wait for user input
-            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-2, 8-9, a-d, g-k[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
+            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-2, 8-9, a-k, e-f, o-p, r[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
 
             key = _read_key()
 
@@ -80,6 +82,18 @@ def run(console: Console) -> None:
             elif key.lower() == 'k':  # Weekly Recommended Days
                 setting_num = 17
                 _edit_setting(console, setting_num, prefs, save_user_preference)
+            elif key.lower() == 'e':  # Gist Setup
+                _gist_setup(console)
+            elif key.lower() == 'f':  # Gist Sync
+                _gist_sync_menu(console)
+            elif key.lower() == 'p':  # Database Info
+                _show_database_info(console)
+            elif key.lower() == 'o':  # Reset Database
+                _reset_database(console)
+            elif key.lower() == 'r':  # Program Reset
+                _program_reset(console)
+                # After reset, exit settings to allow setup wizard to run
+                break
             elif key.lower() == 'x':  # Reset to defaults
                 _reset_to_defaults(console, save_user_preference)
     except KeyboardInterrupt:
@@ -149,16 +163,8 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     status_table.add_column("Value", style="cyan", justify="left")
 
     # Program version
-    try:
-        import tomllib
-        from pathlib import Path
-        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
-        with open(pyproject_path, "rb") as f:
-            pyproject_data = tomllib.load(f)
-            version = pyproject_data.get("project", {}).get("version", "Unknown")
-    except Exception:
-        version = "0.2.0"  # Fallback version
-
+    from src.utils._system import get_version
+    version = get_version()
     status_table.add_row("Program Version", version)
 
     display_mode_names = ["M1 (simple, bar+%)", "M2 (simple, bar %)", "M3 (panel, bar+%)", "M4 (panel, bar %)"]
@@ -200,6 +206,10 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
             db_display = f"{db_path}\n[dim](auto-detect)[/dim]   [#ff8800]\\[h][/#ff8800]"
     status_table.add_row("Database Path", db_display)
 
+    # Storage Mode (new row)
+    storage_mode = _detect_storage_mode(db_path)
+    status_table.add_row("Storage Mode", storage_mode)
+
     # Data sync status
     from src.storage.snapshot_db import check_data_sync_status
     sync_status = check_data_sync_status()
@@ -232,25 +242,48 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     except Exception:
         status_table.add_row("Database Size", "[dim]Unknown[/dim]")
 
-    # Backup information
+    # Local backup information
     from src.config.user_config import get_last_backup_date
     from src.utils.backup import list_backups, get_backup_directory
     from pathlib import Path
 
     last_backup = get_last_backup_date()
-    if last_backup:
-        status_table.add_row("Last Backup", last_backup)
-    else:
-        status_table.add_row("Last Backup", "[dim]Never[/dim]")
-
-    # Count backup files
     try:
         backups = list_backups(Path(db_path))
         backup_count = len(backups)
         monthly_count = sum(1 for b in backups if b["is_monthly"])
-        status_table.add_row("Backups", f"{backup_count} total ({monthly_count} monthly)")
+
+        if last_backup:
+            local_backup_display = f"{last_backup} ({backup_count} files)"
+        else:
+            local_backup_display = f"[dim]Never[/dim] ({backup_count} files)" if backup_count > 0 else "[dim]Never[/dim]"
     except:
-        status_table.add_row("Backups", "[dim]0[/dim]")
+        if last_backup:
+            local_backup_display = last_backup
+        else:
+            local_backup_display = "[dim]Never[/dim]"
+
+    status_table.add_row("Last Local Backup", local_backup_display)
+
+    # Git Gist backup information
+    gist_info = _get_gist_backup_info()
+    if "error" not in gist_info:
+        # Format timestamp: "2025-10-21T14:32:04Z" -> "2025-10-21 14:32"
+        from datetime import datetime
+        try:
+            sync_time = datetime.fromisoformat(gist_info["last_sync"].replace("Z", "+00:00"))
+            sync_display = sync_time.strftime("%Y-%m-%d %H:%M")
+        except:
+            # Fallback: YYYY-MM-DDTHH:MM
+            sync_display = gist_info["last_sync"][:16].replace("T", " ")
+
+        records_display = f"{gist_info['total_records']:,}" if gist_info['total_records'] > 0 else "0"
+        gist_display = f"{sync_display} ({records_display} records)"
+        status_table.add_row("Last Gist Sync", gist_display)
+    elif gist_info.get("error") == "not_synced":
+        # Git Gist configured but never synced
+        status_table.add_row("Last Gist Sync", "[dim]Not synced yet[/dim]")
+    # If not_configured or failed, don't show the row (keeps UI clean)
 
     status_panel = Panel(
         status_table,
@@ -330,8 +363,28 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
     weekly_days = prefs.get('weekly_recommended_days', DEFAULT_PREFERENCES['weekly_recommended_days'])
     settings_table.add_row("[#ff8800]\\[k][/#ff8800]", "Weekly Recommended Days", weekly_days)
 
-    # Empty row for spacing
+    # Empty row - Gist & Database section
     settings_table.add_row("", "", "")
+    settings_table.add_row("[dim]───[/dim]", "[dim]Gist & Database[/dim]", "[dim]─────────────────[/dim]")
+
+    # Gist setup
+    settings_table.add_row("[#ff8800]\\[e][/#ff8800]", "Gist Setup", "[dim]Configure GitHub token & sync[/dim]")
+
+    # Gist sync
+    settings_table.add_row("[#ff8800]\\[f][/#ff8800]", "Gist Sync", "[dim]Push/Pull data to/from Gist[/dim]")
+
+    # Database info
+    settings_table.add_row("[#ff8800]\\[p][/#ff8800]", "Database Info", "[dim]Show detailed statistics[/dim]")
+
+    # Reset database
+    settings_table.add_row("[#ff8800]\\[o][/#ff8800]", "Reset Database", "[dim]Delete DB only (keep config)[/dim]")
+
+    # Empty row - System section
+    settings_table.add_row("", "", "")
+    settings_table.add_row("[dim]───[/dim]", "[dim]System[/dim]", "[dim]──────────────────────[/dim]")
+
+    # Program reset option
+    settings_table.add_row("[#ff8800]\\[r][/#ff8800]", "Program Reset", "[dim]프로그램 완전 재설정 (Setup wizard 재실행)[/dim]")
 
     # Reset to defaults option
     settings_table.add_row("[#ff8800]\\[x][/#ff8800]", "Reset to Defaults", "[dim]Type 'yes' to confirm[/dim]")
@@ -1238,3 +1291,635 @@ def _edit_weekly_days_setting(console: Console, prefs: dict, save_func) -> None:
 
     console.print("\n[dim]Press any key to continue...[/dim]")
     _read_key()
+
+
+def _detect_storage_mode(db_path: str) -> str:
+    """
+    Detect the storage/sync mode being used.
+
+    Args:
+        db_path: Path to the database file
+
+    Returns:
+        Formatted string indicating the storage mode with icon
+    """
+    from pathlib import Path
+
+    # Check for Git Gist setup
+    gist_configured = False
+    try:
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        token = token_manager.get_token()
+        gist_configured = token is not None
+    except Exception:
+        pass
+
+    # Detect cloud storage from path
+    is_onedrive = "OneDrive" in db_path
+    is_icloud = "CloudDocs" in db_path or "iCloud" in db_path
+
+    # Build storage mode string
+    # Always show "Local" as the base (DB is always stored locally)
+    modes = ["[yellow]Local[/yellow]"]
+
+    # Add cloud sync if configured
+    if is_onedrive:
+        modes.append("[green]+ OneDrive[/green]")
+    elif is_icloud:
+        modes.append("[green]+ iCloud[/green]")
+
+    # Add Gist backup if configured
+    if gist_configured:
+        modes.append("[cyan]+ Git Gist[/cyan]")
+
+    return " ".join(modes)
+
+
+# Cache for Gist status (to avoid slow API calls on every Settings refresh)
+_gist_status_cache = {"data": None, "timestamp": 0}
+
+
+def _get_gist_backup_info() -> dict:
+    """
+    Get Git Gist backup information for display in Settings.
+
+    Returns:
+        Dictionary with Gist status (may have "error" key if not configured/failed)
+    """
+    import time
+    from typing import Any, Optional
+
+    # Check cache (60 second TTL)
+    cache_ttl = 60
+    now = time.time()
+
+    if _gist_status_cache["data"] and (now - _gist_status_cache["timestamp"]) < cache_ttl:
+        return _gist_status_cache["data"]
+
+    # Fetch fresh data
+    try:
+        from src.sync.token_manager import TokenManager
+        from src.sync.sync_manager import SyncManager
+
+        # Check if token configured
+        token_manager = TokenManager()
+        if not token_manager.has_token():
+            result = {"error": "not_configured"}
+            _gist_status_cache["data"] = result
+            _gist_status_cache["timestamp"] = now
+            return result
+
+        # Get Gist status
+        sync_manager = SyncManager()
+        status = sync_manager.status()
+
+        if "last_gist_sync" in status:
+            result = {
+                "last_sync": status["last_gist_sync"],
+                "total_records": status.get("total_records_in_gist", 0),
+                "gist_url": status.get("gist_url"),
+                "total_machines": status.get("manifest", {}).get("total_machines", 0),
+                "total_backups": status.get("manifest", {}).get("total_backups", 0),
+            }
+        else:
+            result = {"error": "not_synced"}
+
+        # Update cache
+        _gist_status_cache["data"] = result
+        _gist_status_cache["timestamp"] = now
+
+        return result
+
+    except Exception as e:
+        # Silently fail - don't break Settings if Gist unavailable
+        result = {"error": "failed", "message": str(e)}
+        _gist_status_cache["data"] = result
+        _gist_status_cache["timestamp"] = now
+        return result
+
+
+def _gist_setup(console: Console) -> None:
+    """
+    GitHub Gist 설정 - Settings 메뉴에서 호출.
+
+    Args:
+        console: Rich console for output
+    """
+    console.print("\n")
+    console.print("[bold cyan]GitHub Gist Setup[/bold cyan]\n")
+
+    try:
+        from src.sync.token_manager import TokenManager
+        from src.sync.gist_client import GistClient
+        from src.sync.sync_manager import SyncManager
+
+        # Check if token already exists
+        token_manager = TokenManager()
+        existing_token = token_manager.get_token()
+
+        if existing_token:
+            console.print("[yellow]✓ GitHub token이 이미 설정되어 있습니다.[/yellow]")
+            console.print("[dim]토큰을 재설정하려면 계속하세요.[/dim]\n")
+
+        # Instructions
+        console.print("[bold]GitHub Personal Access Token 생성:[/bold]")
+        console.print("1. 브라우저에서 https://github.com/settings/tokens 열기")
+        console.print("2. 'Generate new token (classic)' 클릭")
+        console.print("3. Scope에서 [cyan]gist[/cyan] 선택")
+        console.print("4. 생성된 토큰 복사\n")
+
+        # Get token
+        console.print("[bold]토큰을 입력하세요 (취소: Enter):[/bold]")
+        token = input("> ").strip()
+
+        if not token:
+            console.print("[yellow]취소되었습니다.[/yellow]")
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
+            return
+
+        # Validate token
+        console.print("\n[dim]토큰 검증 중...[/dim]", end="")
+        try:
+            client = GistClient(token)
+            if not client.test_token():
+                console.print(" [red]✗ 유효하지 않은 토큰[/red]")
+                console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+                input()
+                return
+            console.print(" [green]✓ 유효함[/green]")
+        except Exception as e:
+            console.print(f" [red]✗ 오류: {e}[/red]")
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
+            return
+
+        # Save token
+        token_manager.set_token(token)
+        storage_location = token_manager.get_storage_location()
+        console.print(f"[green]✓ 토큰 저장됨:[/green] {storage_location}\n")
+
+        # Ask if user wants to do initial sync
+        console.print("[bold]초기 동기화를 진행하시겠습니까? (y/N):[/bold]")
+        do_sync = input("> ").strip().lower()
+
+        if do_sync == 'y':
+            try:
+                console.print("\n[dim]동기화 중...[/dim]")
+                sync_manager = SyncManager()
+                stats = sync_manager.push()
+
+                console.print(f"\n[green]✓ 동기화 성공![/green]")
+                console.print(f"  Gist ID: {stats['gist_id']}")
+                console.print(f"  레코드: {stats['exported_records']}")
+
+                # Show Gist URL
+                status = sync_manager.status()
+                if status.get("gist_url"):
+                    console.print(f"  URL: {status['gist_url']}")
+
+            except Exception as e:
+                console.print(f"\n[red]✗ 동기화 실패: {e}[/red]")
+
+        console.print("\n[green]✓ Gist 설정 완료![/green]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+    except ImportError:
+        console.print("[red]✗ Gist 모듈을 불러올 수 없습니다.[/red]")
+        console.print("[dim]Gist 기능이 설치되어 있는지 확인하세요.[/dim]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+    except Exception as e:
+        console.print(f"[red]✗ 오류 발생: {e}[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+
+def _gist_sync_menu(console: Console) -> None:
+    """
+    GitHub Gist 동기화 메뉴 - Settings 메뉴에서 호출.
+
+    Args:
+        console: Rich console for output
+    """
+    console.print("\n")
+    console.print("[bold cyan]GitHub Gist Sync[/bold cyan]\n")
+
+    try:
+        from src.sync.token_manager import TokenManager
+        from src.sync.sync_manager import SyncManager
+
+        # Check if token exists
+        token_manager = TokenManager()
+        if not token_manager.get_token():
+            console.print("[yellow]⚠ GitHub token이 설정되지 않았습니다.[/yellow]")
+            console.print("[dim]먼저 [e] Gist Setup을 실행하세요.[/dim]")
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
+            return
+
+        # Show sync menu
+        console.print("[bold]동기화 옵션:[/bold]")
+        console.print("  [1] Push - 로컬 데이터를 Gist로 업로드")
+        console.print("  [2] Pull - Gist 데이터를 로컬로 다운로드")
+        console.print("  [3] Status - 동기화 상태 확인")
+        console.print("  [ESC] 취소\n")
+
+        console.print("[bold]선택:[/bold] ", end="")
+        choice = _read_key()
+
+        if choice == '\x1b':  # ESC
+            return
+
+        sync_manager = SyncManager()
+
+        if choice == '1':  # Push
+            console.print("1")
+            console.print("\n[dim]Pushing to Gist...[/dim]")
+            try:
+                stats = sync_manager.push()
+                console.print(f"\n[green]✓ Push 성공![/green]")
+                console.print(f"  Gist ID: {stats['gist_id']}")
+                console.print(f"  레코드: {stats['exported_records']}")
+                if stats.get('gist_url'):
+                    console.print(f"  URL: {stats['gist_url']}")
+            except Exception as e:
+                console.print(f"\n[red]✗ Push 실패: {e}[/red]")
+
+        elif choice == '2':  # Pull
+            console.print("2")
+            console.print("\n[dim]Pulling from Gist...[/dim]")
+            try:
+                stats = sync_manager.pull()
+                console.print(f"\n[green]✓ Pull 성공![/green]")
+                console.print(f"  가져온 레코드: {stats.get('imported_records', 0)}")
+                console.print(f"  새 레코드: {stats.get('new_records', 0)}")
+            except Exception as e:
+                console.print(f"\n[red]✗ Pull 실패: {e}[/red]")
+
+        elif choice == '3':  # Status
+            console.print("3")
+            console.print()
+            try:
+                status = sync_manager.status()
+                console.print(f"[cyan]Gist ID:[/cyan] {status.get('gist_id', 'N/A')}")
+                console.print(f"[cyan]URL:[/cyan] {status.get('gist_url', 'N/A')}")
+                console.print(f"[cyan]마지막 동기화:[/cyan] {status.get('last_sync', 'Never')}")
+                console.print(f"[cyan]레코드 수:[/cyan] {status.get('record_count', 0)}")
+            except Exception as e:
+                console.print(f"[red]✗ 상태 확인 실패: {e}[/red]")
+
+        else:
+            console.print("\n[yellow]잘못된 선택입니다.[/yellow]")
+
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+    except ImportError:
+        console.print("[red]✗ Gist 모듈을 불러올 수 없습니다.[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+    except Exception as e:
+        console.print(f"[red]✗ 오류 발생: {e}[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+
+def _show_database_info(console: Console) -> None:
+    """
+    데이터베이스 상세 정보 표시 - Settings 메뉴에서 호출.
+
+    Args:
+        console: Rich console for output
+    """
+    console.print("\n")
+    console.print("[bold cyan]Database Information[/bold cyan]\n")
+
+    try:
+        from src.storage.snapshot_db import get_database_stats, DEFAULT_DB_PATH
+        from pathlib import Path
+
+        db_path = DEFAULT_DB_PATH
+
+        if not db_path.exists():
+            console.print("[yellow]데이터베이스 파일이 존재하지 않습니다.[/yellow]")
+            console.print(f"[dim]경로: {db_path}[/dim]")
+            console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+            input()
+            return
+
+        # Get database stats
+        stats = get_database_stats()
+
+        # Display info
+        info_table = Table(show_header=False, box=None, padding=(0, 2))
+        info_table.add_column("항목", style="white", width=25)
+        info_table.add_column("값", style="cyan")
+
+        info_table.add_row("파일 경로", str(db_path))
+
+        # File size
+        size_bytes = db_path.stat().st_size
+        if size_bytes < 1024:
+            size_str = f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            size_str = f"{size_bytes / 1024:.2f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            size_str = f"{size_bytes / (1024 * 1024):.2f} MB"
+        else:
+            size_str = f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+        info_table.add_row("파일 크기", size_str)
+
+        info_table.add_row("총 레코드 수", f"{stats['total_records']:,}")
+        info_table.add_row("총 일수", str(stats['total_days']))
+        info_table.add_row("날짜 범위", f"{stats['oldest_date']} ~ {stats['newest_date']}")
+
+        # Get device count and project count
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(DISTINCT machine_name) FROM usage_snapshots")
+        device_count = cursor.fetchone()[0]
+        info_table.add_row("디바이스 수", str(device_count))
+
+        cursor.execute("SELECT COUNT(DISTINCT project_path) FROM usage_snapshots")
+        project_count = cursor.fetchone()[0]
+        info_table.add_row("프로젝트 수", str(project_count))
+
+        conn.close()
+
+        console.print(Panel(info_table, title="[bold]Database Statistics", border_style="cyan"))
+
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+    except Exception as e:
+        console.print(f"[red]✗ 오류 발생: {e}[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+
+def _reset_database(console: Console) -> None:
+    """
+    데이터베이스 재설정 - Settings 메뉴에서 호출.
+
+    Args:
+        console: Rich console for output
+    """
+    from src.storage.snapshot_db import DEFAULT_DB_PATH, get_database_stats
+    from src.config.user_config import get_db_path
+    from pathlib import Path
+
+    console.print("\n")
+    console.print("[bold yellow]⚠ Database Reset[/bold yellow]\n")
+
+    # 현재 DB 경로 및 스토리지 모드
+    custom_db_path = get_db_path()
+    db_path = Path(custom_db_path) if custom_db_path else DEFAULT_DB_PATH
+    db_path_str = str(db_path)
+
+    if "OneDrive" in db_path_str:
+        storage_mode = "OneDrive Sync"
+    elif "CloudDocs" in db_path_str or "iCloud" in db_path_str:
+        storage_mode = "iCloud Sync"
+    else:
+        storage_mode = "Local"
+
+    console.print("[red]다음 데이터베이스가 삭제됩니다:[/red]")
+    console.print(f"  • 파일: [dim]{db_path}[/dim]")
+    console.print(f"  • 스토리지: [cyan]{storage_mode}[/cyan]")
+
+    # 현재 통계 표시
+    if db_path.exists():
+        try:
+            stats = get_database_stats()
+            console.print(f"  • 레코드: [yellow]{stats['total_records']:,}개[/yellow]")
+            console.print(f"  • 기간: [yellow]{stats['oldest_date']} ~ {stats['newest_date']}[/yellow]")
+            console.print(f"  • 일수: [yellow]{stats['total_days']}일[/yellow]")
+        except:
+            pass
+    else:
+        console.print("  [yellow](데이터베이스 파일이 없음)[/yellow]")
+
+    console.print()
+    console.print("[green]보존되는 항목:[/green]")
+    console.print(f"  • 모든 설정 파일")
+    console.print(f"  • Gist 토큰 및 Gist 클라우드 백업")
+
+    # Claude Code 원본 데이터
+    claude_projects = Path.home() / ".claude" / "projects"
+    console.print(f"  • Claude Code usage 원본 데이터")
+    console.print(f"    [dim]{claude_projects}/*.jsonl[/dim]")
+
+    console.print()
+    console.print("[cyan]재설정 후:[/cyan]")
+    console.print("  • JSONL 파일에서 데이터 자동 재구축")
+    console.print("  • 다음 실행 시 자동으로 재구축됨")
+    if storage_mode in ["OneDrive Sync", "iCloud Sync"]:
+        console.print(f"  • [yellow]주의:[/yellow] 다른 PC도 동일하게 재구축됩니다 ({storage_mode})")
+    console.print()
+
+    # Confirmation
+    console.print("[bold]계속하려면 'yes'를 입력하세요 (취소: Enter):[/bold]")
+    confirmation = input("> ").strip().lower()
+
+    if confirmation != 'yes':
+        console.print("[yellow]취소되었습니다.[/yellow]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+        return
+
+    # Reset database
+    try:
+        from src.storage.snapshot_db import DEFAULT_DB_PATH
+        from pathlib import Path
+
+        db_path = DEFAULT_DB_PATH
+
+        if db_path.exists():
+            # Show stats before deletion
+            try:
+                from src.storage.snapshot_db import get_database_stats
+                stats = get_database_stats()
+                console.print(f"\n[dim]삭제될 데이터:[/dim]")
+                console.print(f"[dim]  레코드: {stats['total_records']:,}[/dim]")
+                console.print(f"[dim]  기간: {stats['oldest_date']} ~ {stats['newest_date']}[/dim]")
+            except:
+                pass
+
+            db_path.unlink()
+            console.print(f"\n[green]✓ 데이터베이스 삭제됨[/green]")
+            console.print(f"[dim]  {db_path}[/dim]")
+
+            # Delete backups
+            backup_dir = db_path.parent
+            backups = list(backup_dir.glob("*.db.bak")) + list(backup_dir.glob("usage_history_backup_*.db"))
+            if backups:
+                console.print(f"\n[cyan]백업 파일 {len(backups)}개 발견[/cyan]")
+                console.print("[bold]백업도 삭제하시겠습니까? (y/N):[/bold]")
+                delete_backups = input("> ").strip().lower()
+
+                if delete_backups == 'y':
+                    for backup in backups:
+                        backup.unlink()
+                    console.print(f"[green]✓ 백업 {len(backups)}개 삭제됨[/green]")
+                else:
+                    console.print(f"[yellow]백업 {len(backups)}개 유지됨[/yellow]")
+
+        else:
+            console.print("[yellow]데이터베이스 파일이 존재하지 않습니다.[/yellow]")
+
+        console.print("\n[bold green]✓ 재설정 완료![/bold green]")
+        console.print("[dim]다음 실행 시 JSONL 파일에서 데이터가 자동으로 재구축됩니다.[/dim]")
+
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+    except Exception as e:
+        console.print(f"\n[red]✗ 오류 발생: {e}[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+
+
+def _program_reset(console: Console) -> None:
+    """
+    프로그램 완전 재설정 - Settings 메뉴에서 호출.
+
+    Args:
+        console: Rich console for output
+    """
+    from src.config.user_config import APP_DATA_DIR, get_db_path
+    from src.storage.snapshot_db import get_default_db_path
+    from src.sync.token_manager import TokenManager
+    from pathlib import Path
+
+    console.print("\n")
+    console.print("[bold yellow]⚠ 프로그램 완전 재설정[/bold yellow]\n")
+
+    # 현재 스토리지 모드 감지
+    custom_db_path = get_db_path()
+    db_path = Path(custom_db_path) if custom_db_path else get_default_db_path()
+    db_path_str = str(db_path)
+
+    if "OneDrive" in db_path_str:
+        storage_mode = "OneDrive Sync"
+    elif "CloudDocs" in db_path_str or "iCloud" in db_path_str:
+        storage_mode = "iCloud Sync"
+    else:
+        storage_mode = "Local"
+
+    # 삭제될 항목 표시
+    console.print("[red]다음 항목이 삭제됩니다:[/red]")
+
+    # 앱 데이터 폴더
+    if APP_DATA_DIR.exists():
+        console.print(f"  • 설정 폴더: [dim]{APP_DATA_DIR}[/dim]")
+        # 폴더 내 주요 파일 표시
+        config_files = list(APP_DATA_DIR.glob("*.json"))
+        if config_files:
+            for cf in config_files[:3]:  # 최대 3개만
+                console.print(f"    - {cf.name}")
+    else:
+        console.print(f"  • 설정 폴더: [dim]{APP_DATA_DIR}[/dim] [yellow](없음)[/yellow]")
+
+    # Gist 토큰 파일
+    gist_token_file = Path.home() / ".claude" / "gist_token.txt"
+    if gist_token_file.exists():
+        console.print(f"  • Gist 토큰 파일: [dim]{gist_token_file}[/dim]")
+
+    # 캐시 폴더
+    console.print("  • 모든 캐시 및 임시 파일")
+
+    console.print()
+    console.print("[green]보존되는 항목:[/green]")
+
+    # 데이터베이스 (스토리지 모드별 설명)
+    console.print(f"  • 데이터베이스 ([cyan]{storage_mode}[/cyan])")
+    console.print(f"    [dim]{db_path}[/dim]")
+
+    # Claude Code 원본 데이터
+    claude_projects = Path.home() / ".claude" / "projects"
+    console.print(f"  • Claude Code usage 원본 데이터")
+    console.print(f"    [dim]{claude_projects}/*.jsonl[/dim]")
+
+    # Git Gist 백업
+    try:
+        token_manager = TokenManager()
+        if token_manager.get_token():
+            console.print("  • GitHub Gist 클라우드 백업 (기존 Gist는 유지됨)")
+    except:
+        pass
+
+    # 시스템 keyring 토큰
+    try:
+        token_manager = TokenManager()
+        if TokenManager.is_keyring_available():
+            token_location = token_manager.get_storage_location()
+            if "keyring" in token_location.lower():
+                console.print(f"  • 시스템 keyring의 Gist 토큰")
+                console.print(f"    [dim]{token_location}[/dim]")
+    except:
+        pass
+
+    console.print()
+    console.print("[cyan]재설정 후:[/cyan]")
+    console.print("  • 프로그램이 종료됩니다")
+    console.print("  • 다음 실행 시 Setup wizard가 자동으로 시작됩니다")
+    if storage_mode in ["OneDrive Sync", "iCloud Sync"]:
+        console.print(f"  • Setup wizard에서 [cyan]{storage_mode}[/cyan] 위치를 다시 선택할 수 있습니다")
+    console.print()
+
+    # 확인 입력 받기
+    console.print("[bold]계속하려면 'yes'를 입력하세요 (취소: Enter)[/bold]")
+    confirmation = input("> ").strip().lower()
+
+    if confirmation != 'yes':
+        console.print("[yellow]재설정이 취소되었습니다.[/yellow]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()
+        return
+
+    # 재설정 실행
+    try:
+        from src.commands import reset
+        import shutil
+        from pathlib import Path
+        from src.config.user_config import APP_DATA_DIR
+
+        console.print("\n[dim]재설정 중...[/dim]")
+
+        deleted_items = []
+
+        # 1. APP_DATA_DIR 삭제
+        if APP_DATA_DIR.exists():
+            shutil.rmtree(APP_DATA_DIR)
+            deleted_items.append(str(APP_DATA_DIR))
+
+        # 2. Gist 토큰 파일 삭제
+        gist_token_file = Path.home() / ".claude" / "gist_token.txt"
+        if gist_token_file.exists():
+            gist_token_file.unlink()
+            deleted_items.append(str(gist_token_file))
+
+        console.print(f"\n[bold green]✓ 재설정 완료![/bold green]")
+        console.print(f"[dim]총 {len(deleted_items)}개 항목 삭제됨[/dim]\n")
+
+        console.print("[cyan]프로그램을 다시 실행하면 Setup wizard가 시작됩니다:[/cyan]")
+        console.print("[bold cyan]  ccu[/bold cyan]\n")
+
+        console.print("[yellow]Ctrl+C를 눌러 프로그램을 종료하세요...[/yellow]")
+        try:
+            while True:
+                input()  # Wait indefinitely until Ctrl+C
+        except KeyboardInterrupt:
+            console.print("\n[dim]프로그램을 종료합니다...[/dim]")
+            import sys
+            sys.exit(0)
+
+    except Exception as e:
+        console.print(f"\n[red]✗ 재설정 중 오류 발생: {e}[/red]")
+        console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+        input()

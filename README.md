@@ -34,13 +34,20 @@ Most features are accessed through keyboard shortcuts in the interactive dashboa
 - 🔄 **Real-time Updates** - Automatic file watching when Claude Code creates new logs
 - 📅 **Long-term Tracking** - Preserves usage data beyond Claude Code's 30-day limit
 - 🌐 **Multi-PC Sync** - Two synchronization methods:
-  - **OneDrive/iCloud** - Automatic cloud storage detection (OneDrive for WSL2/Windows, iCloud Drive for macOS)
-    - ⚠️ **Note**: Tested on **WSL2 + OneDrive only**. macOS iCloud Drive support implemented but not fully tested.
-  - **GitHub Gist** - JSON-based sync with version control and automatic backups (NEW!)
+  - **GitHub Gist** (RECOMMENDED) - JSON-based sync with version control and automatic backups
     - ✅ Works on all platforms with GitHub account
     - ✅ Automatic daily backups with 30-day retention
+    - ✅ Git version history (unlimited restore points)
+    - ✅ Automatic conflict resolution (v1.3.5+)
     - ✅ Incremental sync (only new data)
     - ✅ Safe: never modifies original `~/.claude/` files
+    - ✅ No SQLite corruption issues
+  - **OneDrive/iCloud** (Legacy) - Automatic cloud storage detection
+    - ⚠️ **May be deprecated in future versions**
+    - ⚠️ SQLite file corruption possible during sync
+    - ⚠️ No conflict resolution (last-write-wins)
+    - ⚠️ Limited to specific platforms (OneDrive: WSL2/Windows, iCloud: macOS)
+    - ✅ Tested on WSL2 + OneDrive only (iCloud not tested)
 - 🖥️ **Per-Machine Stats** - Track usage breakdown across different computers
 
 ### View Modes (All In-Dashboard)
@@ -196,16 +203,32 @@ All interactive GIF demonstrations show real-time TUI dashboard with keyboard na
 ![Settings Mode](docs/images/09-settings-mode.gif)
 
 **Key Features:**
-- Color customization (solid colors and gradient ranges)
-- Display mode preferences
-- Timezone configuration
-- **Weekly Recommended Days** - Configure daily usage target calculation (1-7 days, default: 7)
-- Backup management options
-- Database path configuration
-- Machine name customization
-- Reset to defaults with confirmation
+- **Display Settings:**
+  - Color customization (solid colors)
+  - Auto refresh intervals
+  - File watch intervals
+- **Data & Sync:**
+  - `[g]` Machine name customization
+  - `[h]` Database path configuration
+  - `[i]` Data sync status check
+  - `[e]` **Gist Setup** - Configure GitHub token & initial sync
+  - `[f]` **Gist Sync** - Push/Pull data to/from Gist
+- **Backup & Timezone:**
+  - Auto backup settings
+  - Backup retention configuration
+  - Timezone settings
+- **Advanced:**
+  - Exclude Haiku messages option
+  - Weekly recommended days (1-7)
+  - `[p]` **Database Info** - View detailed statistics
+  - `[o]` **Reset Database** - Delete DB only (keep config)
+- **System:**
+  - `[r]` **Program Reset** - Complete reset with setup wizard
+  - `[x]` Reset to defaults
 
 **Keyboard:** `s` to open settings menu from any view
+
+**Note:** Most CLI commands are now accessible within the Settings menu for a unified experience.
 
 ---
 
@@ -235,6 +258,11 @@ pipx install -e .
 # Run from anywhere
 ccu
 ```
+
+> [!TIP]
+> **자동 포함되는 보안 기능:**
+> 설치 시 `keyring` 라이브러리가 자동으로 포함되어 GitHub Gist 토큰을 OS 보안 저장소(Linux: GNOME Keyring, macOS: Keychain, Windows: Credential Manager)에 안전하게 보관합니다.
+> 별도 설치나 설정이 필요 없습니다!
 
 > [!NOTE]
 > **First-Time Setup Wizard**: On first run, an interactive setup wizard will help you choose:
@@ -274,6 +302,7 @@ ccu  # Works from any directory!
 - ✅ **Editable mode** - Source code changes are immediately reflected (perfect for development)
 - ✅ **Clean uninstall** - `pipx uninstall claude-goblin-mod` removes everything
 - ✅ **Recommended by Python packaging community** for CLI tools
+- ✅ **Automatic security** - `keyring` included for secure GitHub token storage
 
 ### Alternative: Local Editable Install (pip)
 
@@ -290,6 +319,9 @@ pip install -e .
 # Now you can use ccu anywhere
 ccu  # Works from any directory!
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** `pip install -e .`은 `pyproject.toml`의 모든 의존성(keyring 포함)을 자동으로 설치합니다.
 
 **Note**: On some systems (Ubuntu 24.04+), you may encounter an "externally-managed-environment" error. In this case, use pipx instead (recommended) or create a virtual environment (see next section).
 
@@ -312,12 +344,15 @@ cd claude-goblin-mod
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install in editable mode
+# Install in editable mode (includes keyring for security)
 pip install -e .
 
 # Use (while venv is active)
 ccu
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** Virtual environment에서도 keyring이 자동 설치되어 토큰을 안전하게 보관합니다.
 
 ### Alternative: Run from Source (No Install)
 
@@ -327,12 +362,15 @@ For quick testing without installation:
 git clone https://github.com/wangtae/claude-goblin-mod.git
 cd claude-goblin-mod
 
-# Install dependencies only
+# Install dependencies (includes keyring for secure token storage)
 pip install -r requirements.txt
 
 # Run directly
 python3 -m src.cli
 ```
+
+> [!TIP]
+> **보안 기능 자동 포함:** `requirements.txt`에도 keyring이 포함되어 있어 모든 설치 방법에서 동일한 보안 수준을 제공합니다.
 
 ---
 
@@ -370,31 +408,50 @@ ccu --help                   # Show help message
 
 ### Additional Commands
 
-Only a few commands exist outside the dashboard:
+CLI commands exist for automation and scripting, but **most are also accessible within the Settings menu (`s` key) in the dashboard:**
 
 ```bash
-# Heatmap in terminal (also accessible via 'h' in dashboard)
-ccu heatmap              # Current year
+# Heatmap in terminal
+ccu heatmap              # Current year (also: 'h' in dashboard)
 ccu heatmap --year 2024  # Specific year
 
-# Configuration
+# Configuration (also in Settings: [g] [h])
 ccu config show                                   # View current configuration
-ccu config set-db-path <path>                     # Set custom database path
-ccu config clear-db-path                          # Use auto-detection
-ccu config set-machine-name "Home-Desktop"        # Set friendly device name
-ccu config clear-machine-name                     # Use system hostname
+ccu config set-db-path <path>                     # Set custom database path → [h]
+ccu config clear-db-path                          # Use auto-detection → [h]
+ccu config set-machine-name "Home-Desktop"        # Set friendly device name → [g]
+ccu config clear-machine-name                     # Use system hostname → [g]
 
-# GitHub Gist Sync (multi-device cloud backup)
-ccu gist setup           # Interactive setup wizard
-ccu gist push            # Upload local data to Gist
-ccu gist pull            # Download data from Gist
-ccu gist status          # Show sync status
+# GitHub Gist Sync (also in Settings: [e] [f])
+ccu gist setup           # Interactive setup wizard → [e] Gist Setup
+ccu gist push            # Upload local data to Gist → [f] Gist Sync → Push
+ccu gist pull            # Download data from Gist → [f] Gist Sync → Pull
+ccu gist status          # Show sync status → [f] Gist Sync → Status
 
-# Database management (rarely needed)
-ccu reset-db --force     # Reset database
+# Program & Database Management (also in Settings: [r] [o] [p])
+ccu reset                # 프로그램 완전 재설정 → [r] Program Reset
+ccu reset --force        # 확인 없이 즉시 실행
+ccu reset-db --force     # Reset database only → [o] Reset Database
+# Database info available at → [p] Database Info
 ```
 
-**Note**: Most users will only ever run `ccu` to open the dashboard. All settings (including database path and machine name) can be configured from the Settings menu (`s` key) inside the dashboard.
+**Note**: **We recommend using the Settings menu (`s` key) for most operations** as it provides a unified, interactive experience. CLI commands are primarily for automation and scripting.
+
+#### Program Reset vs Database Reset
+
+**`ccu reset`** (전체 재설정):
+- 설정 파일 삭제 (`~/.claude/claude-goblin-mod/`)
+- Gist 토큰 파일 삭제 (파일 방식인 경우)
+- 캐시 및 임시 파일 삭제
+- 다음 실행 시 setup wizard 자동 실행
+- ✅ 데이터베이스는 보존됨
+- ✅ JSONL 원본 파일 보존됨
+- ✅ 시스템 keyring 토큰 보존됨
+
+**`ccu reset-db`** (데이터베이스만 초기화):
+- 데이터베이스 파일만 삭제
+- 설정 및 구성 유지
+- JSONL에서 데이터 재구축 필요
 
 ### GitHub Gist Synchronization
 
@@ -428,6 +485,67 @@ ccu gist status  # View sync info and Gist URL
 1. GitHub account (free)
 2. Personal Access Token with `gist` scope
 3. Run `ccu gist setup` on each machine
+
+#### 🔐 Token Security
+
+GitHub Personal Access Token은 3단계 우선순위로 자동 저장됩니다:
+
+**1. OS 보안 저장소 (최우선, 암호화) ⭐**
+- **macOS**: Keychain (자동 작동)
+- **Windows**: Credential Manager (자동 작동)
+- **Linux**: Secret Service (추가 설치 필요)
+- ✅ OS-level 암호화
+- ✅ 다른 프로그램 접근 불가
+- ✅ 파일 시스템에 평문 노출 없음
+
+**2. 파일 저장 (자동 폴백, 권한 600) ⚠️**
+
+Keyring이 없는 환경에서 자동 활성화:
+```
+파일: ~/.claude/gist_token.txt
+권한: 600 (본인만 읽기/쓰기)
+환경: WSL2, Docker, Headless Linux
+```
+- ⚠️ Setup 시 보안 안내 표시
+- ✅ 파일 권한으로 기본 보호
+- ✅ 일반적인 개인 사용에는 충분히 안전
+- 💡 원한다면 Secret Service 설치 가능 (아래 참조)
+
+**3. 환경 변수 (고급/CI/CD용)**
+
+```bash
+export GITHUB_GIST_TOKEN="ghp_xxxxxxxxxxxx"
+ccu gist push
+```
+- CI/CD 파이프라인에 적합
+- 프로세스 종료 시 자동 제거
+- Docker 환경 권장 방식
+
+---
+
+**💡 사용자가 할 일:**
+1. ✅ `ccu gist setup` 실행
+2. ✅ GitHub 토큰 입력
+3. ❌ ~~keyring 설치~~ (이미 자동 설치됨!)
+4. ❌ ~~저장 방식 선택~~ (자동 처리됨!)
+
+**📍 토큰 저장 위치 확인:**
+
+```bash
+ccu gist status
+
+# 출력 예시:
+# ┌─ GitHub Token ─┐
+# │ ✓ Configured    │
+# │ Location: System keyring (SecretServiceKeyring)
+# └─────────────────┘
+```
+
+**🔒 보안 원칙:**
+- ✅ **자동**: keyring 설치되어 있으면 OS 보안 저장소에 자동 저장
+- ✅ **폴백**: keyring 작동 안 하면 자동으로 파일로 저장 (경고 표시)
+- ✅ **유연**: 환경변수로 CI/CD 환경 대응
+- ❌ **금지**: 토큰을 Git 저장소에 커밋하거나 스크립트에 하드코딩
 
 See the [**Gist Sync Guide**](docs/gist-sync-guide.md) for complete documentation.
 
@@ -667,6 +785,63 @@ ccu config set-db-path /mnt/d/OneDrive/.claude-goblin/usage_history.db
 ---
 
 ## FAQ
+
+### Security & Token Management
+
+**Q: keyring을 별도로 설치해야 하나요?**
+
+A: **아니요!** 모든 설치 방법(pipx, pip, requirements.txt)에서 keyring이 자동으로 포함됩니다. `ccu gist setup` 실행 시 자동으로 OS 보안 저장소에 토큰이 저장됩니다. 별도 설치나 설정이 필요 없습니다.
+
+**Q: WSL2/Linux에서 "No recommended backend" warning이 나옵니다**
+
+A: Linux/WSL2에는 기본적으로 keyring backend가 없어서 토큰이 파일로 저장됩니다 (`~/.claude/gist_token.txt`, 권한 600). 일반적인 개인 사용에는 충분히 안전하지만, OS-level 암호화를 원한다면:
+
+**옵션 1: 그냥 사용 (권장)**
+- 파일 권한 600으로 충분히 안전
+- 추가 작업 불필요
+
+**옵션 2: Secret Service 설치 (선택)**
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install gnome-keyring libsecret-1-0
+
+# 프로그램 재설치
+pipx reinstall claude-code-usage-analytics
+
+# 토큰 재설정 (자동으로 keyring에 저장됨)
+ccu gist setup
+```
+
+⚠️ **WSL2 주의사항**: GUI가 없는 WSL2에서는 gnome-keyring이 제대로 작동하지 않을 수 있습니다. 파일 저장 방식을 그대로 사용하는 것을 권장합니다.
+
+**옵션 3: 환경 변수 사용 (고급)**
+```bash
+export GITHUB_GIST_TOKEN="ghp_xxxxxxxxxxxx"
+ccu gist push
+```
+재부팅 시 사라지므로 매번 설정 필요
+
+**Q: 토큰이 어디에 저장되었는지 확인하려면?**
+
+A: `ccu gist status` 명령으로 확인 가능합니다.
+```bash
+ccu gist status
+
+# 출력 예시:
+# ┌─ GitHub Token ─┐
+# │ ✓ Configured    │
+# │ Location: System keyring (SecretServiceKeyring)
+# └─────────────────┘
+```
+
+**Q: 기존에 파일로 저장된 토큰을 키링으로 옮기려면?**
+
+A: keyring이 설치되어 있다면 토큰을 재설정하기만 하면 됩니다:
+```bash
+ccu gist set-token ghp_xxxxxxxxxxxx
+```
+프로그램이 자동으로 키링에 저장하고 기존 파일을 삭제합니다.
 
 ### General Questions
 

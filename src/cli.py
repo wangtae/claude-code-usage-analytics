@@ -11,6 +11,7 @@ from src.commands import (
     usage,
     heatmap,
     reset_db,
+    reset,
     config_cmd,
     settings,
     gist_cmd,
@@ -71,6 +72,17 @@ def heatmap_command(
 ):
     """Show GitHub-style activity heatmap in the terminal."""
     heatmap.run(console, year=year, fast=fast)
+
+
+@app.command(name="reset")
+def reset_command(
+    force: bool = typer.Option(False, "--force", help="확인 없이 즉시 실행"),
+):
+    """프로그램 완전 재설정 (설정 파일 삭제 후 setup wizard 재실행)."""
+    import sys
+    if force and "--force" not in sys.argv:
+        sys.argv.append("--force")
+    reset.run(console)
 
 
 @app.command(name="reset-db")

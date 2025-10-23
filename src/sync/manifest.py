@@ -277,3 +277,86 @@ class Manifest:
             "newest_sync": newest_sync,
             "retention_days": self.data.get("backup_retention_days", 30),
         }
+
+    def get_last_updated(self) -> str:
+        """
+        Get the last_updated timestamp of this manifest.
+
+        Returns:
+            ISO timestamp string
+        """
+        return self.data.get("last_updated", datetime.now(timezone.utc).isoformat())
+
+    def is_newer_than(self, timestamp: str) -> bool:
+        """
+        Check if this manifest is newer than the given timestamp.
+
+        Args:
+            timestamp: ISO timestamp string to compare against
+
+        Returns:
+            True if this manifest is newer
+        """
+        try:
+            manifest_time = datetime.fromisoformat(self.data["last_updated"].replace("Z", "+00:00"))
+            compare_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            return manifest_time > compare_time
+        except (ValueError, KeyError):
+            # If timestamps are invalid, assume not newer
+            return False
+
+    def merge_with(self, other: "Manifest") -> "Manifest":
+        """
+        Merge this manifest with another, preferring newer data.
+
+        Strategy:
+        - For each machine, keep the entry with the most recent last_sync
+        - Combine backup lists (deduplicate)
+        - Use the newer last_updated timestamp
+
+        Args:
+            other: Another Manifest instance to merge with
+
+        Returns:
+            New Manifest instance with merged data
+        """
+        merged_data = self._create_empty()
+
+        # Merge machines from both manifests
+        all_machine_names = set(self.list_machines()) | set(other.list_machines())
+
+        for machine_name in all_machine_names:
+            self_machine = self.get_machine(machine_name)
+            other_machine = other.get_machine(machine_name)
+
+            if self_machine and other_machine:
+                # Both have this machine - keep the newer one
+                self_sync = datetime.fromisoformat(self_machine["last_sync"].replace("Z", "+00:00"))
+                other_sync = datetime.fromisoformat(other_machine["last_sync"].replace("Z", "+00:00"))
+
+                if self_sync >= other_sync:
+                    merged_machine = self_machine.copy()
+                else:
+                    merged_machine = other_machine.copy()
+
+                # Combine backups from both (deduplicate)
+                self_backups = set(self_machine.get("backups", []))
+                other_backups = set(other_machine.get("backups", []))
+                merged_machine["backups"] = list(self_backups | other_backups)
+
+            elif self_machine:
+                merged_machine = self_machine.copy()
+            else:
+                merged_machine = other_machine.copy()
+
+            merged_data["machines"].append(merged_machine)
+
+        # Use the newer last_updated timestamp
+        self_updated = datetime.fromisoformat(self.data["last_updated"].replace("Z", "+00:00"))
+        other_updated = datetime.fromisoformat(other.data["last_updated"].replace("Z", "+00:00"))
+        merged_data["last_updated"] = max(self_updated, other_updated).isoformat()
+
+        # Preserve backup retention setting
+        merged_data["backup_retention_days"] = self.data.get("backup_retention_days", 30)
+
+        return Manifest(merged_data)

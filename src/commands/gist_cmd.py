@@ -32,8 +32,10 @@ def setup_wizard():
     token_manager = TokenManager()
     if not TokenManager.is_keyring_available():
         console.print(
-            "[yellow]⚠ Keyring library not installed[/yellow]\n"
-            "For better security, install: [cyan]pip install keyring[/cyan]\n"
+            "[yellow]⚠ Keyring 백엔드를 사용할 수 없습니다[/yellow]\n"
+            "토큰이 파일로 저장됩니다 (보안성 낮음).\n"
+            "Docker/CI 환경에서는 환경변수 사용을 권장합니다:\n"
+            "[cyan]export GITHUB_GIST_TOKEN=\"ghp_xxx\"[/cyan]\n"
         )
 
     # Get GitHub token
@@ -114,23 +116,40 @@ def set_token(token: str):
 
 @app.command()
 def push(
-    force: bool = typer.Option(False, "--force", "-f", help="Export all data (not incremental)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force push, skip conflict detection (may overwrite changes)"),
+    export_all: bool = typer.Option(False, "--export-all", help="Export all data (not incremental)"),
     no_backup: bool = typer.Option(False, "--no-backup", help="Skip backup creation"),
 ):
     """
     Push local data to GitHub Gist (incremental).
+
+    Automatically detects and resolves conflicts when multiple devices push simultaneously.
+    Use --force to skip conflict detection and force overwrite.
     """
     try:
+        from src.sync.exceptions import ConflictError
+
         sync_manager = SyncManager()
         console.print("Pushing to Gist...", end="")
 
-        stats = sync_manager.push(force=force, create_backup=not no_backup)
+        # If --force, skip conflict check. Otherwise, use auto-merge.
+        stats = sync_manager.push(
+            force=export_all,
+            create_backup=not no_backup,
+            skip_conflict_check=force
+        )
 
         if stats.get("status") == "nothing_to_sync":
             console.print(" [yellow]Nothing to sync[/yellow]")
             return
 
-        console.print(" [green]✓ Done[/green]\n")
+        console.print(" [green]✓ Done[/green]")
+
+        # Show conflict resolution message if applicable
+        if stats.get("conflicts_resolved"):
+            console.print("[green]✓ Conflicts auto-resolved via merge[/green]")
+
+        console.print()
 
         # Show statistics
         table = Table(show_header=False, box=None)
@@ -148,6 +167,13 @@ def push(
         if status.get("gist_url"):
             console.print(f"\n[dim]View at: {status['gist_url']}[/dim]")
 
+    except ConflictError as e:
+        console.print(f" [red]✗ Conflict Error[/red]\n")
+        console.print(f"[yellow]{e}[/yellow]\n")
+        console.print("[dim]Suggestions:[/dim]")
+        console.print("  1. Run [cyan]ccu gist pull[/cyan] to sync latest data, then push again")
+        console.print("  2. Or use [cyan]ccu gist push --force[/cyan] to override (may lose data)")
+        raise typer.Exit(1)
     except Exception as e:
         console.print(f" [red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
