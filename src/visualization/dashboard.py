@@ -1510,6 +1510,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
+            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            opus_recommended_pct = 0
+            if limits.get('opus_reset'):
+                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+
             # Calculate bar width based on terminal width (same as usage mode)
             terminal_width = console.width if console else 120
             bar_width = max(20, terminal_width - 14)
@@ -1557,11 +1562,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
             limits_table.add_row("Current week (Opus)")
 
-            # Opus uses same weekly recommended percentage as "all models"
-            if weekly_recommended_pct > 0:
+            # Opus uses its own reset time (opus_reset) which may differ from week_reset
+            if opus_recommended_pct > 0:
                 opus_bar = _create_usage_bar_with_recommended(
                     limits["opus_pct"],
-                    weekly_recommended_pct,
+                    opus_recommended_pct,
                     width=bar_width,
                     color_mode=color_mode,
                     colors=colors
