@@ -319,7 +319,7 @@ def _get_bar_color(percentage: int, color_mode: str, colors: dict) -> str:
         return colors.get("color_solid", DEFAULT_COLORS['color_solid'])
 
 
-def _create_usage_bar_with_percent(percentage: int, width: int = 50, color_mode: str = "gradient", colors: dict = None) -> Text:
+def _create_usage_bar_with_percent(percentage: int, width: int = 50, color_mode: str = "solid", colors: dict = None) -> Text:
     """
     Create a usage bar for usage page with percentage at the end.
     Format: ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 8%
@@ -353,7 +353,7 @@ def _create_usage_bar_with_recommended(
     current_pct: int,
     recommended_pct: float,
     width: int = 50,
-    color_mode: str = "gradient",
+    color_mode: str = "solid",
     colors: dict = None
 ) -> Text:
     """
@@ -407,7 +407,7 @@ def _create_usage_bar_with_recommended_separate(
     current_pct: int,
     recommended_pct: float,
     width: int = 50,
-    color_mode: str = "gradient",
+    color_mode: str = "solid",
     colors: dict = None
 ) -> Text:
     """
@@ -585,7 +585,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
         # Get color mode and colors from view_mode_ref
         from src.config.defaults import DEFAULT_COLORS
-        color_mode = view_mode_ref.get('color_mode', 'gradient') if view_mode_ref else 'gradient'
+        color_mode = view_mode_ref.get('color_mode', 'solid') if view_mode_ref else 'solid'
         colors = view_mode_ref.get('colors', DEFAULT_COLORS) if view_mode_ref else DEFAULT_COLORS
 
         # Determine bar width and style based on mode
@@ -1059,24 +1059,10 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 view_mode_ref['hourly_hours'] = hourly_hours_int
     else:
         # Normal mode - show KPI section and breakdowns
-        scoped_totals: DailyTotal | None = None
-        if view_mode == "weekly":
-            scoped_totals = _calculate_totals_for_records(records)
-        elif view_mode == "monthly":
-            target_year = view_mode_ref.get('target_year') if view_mode_ref else None
-            target_month = view_mode_ref.get('target_month') if view_mode_ref else None
-            if isinstance(target_year, int) and isinstance(target_month, int):
-                scoped_totals = _calculate_totals_for_month(summary, target_year, target_month)
-            if scoped_totals is None:
-                scoped_totals = _calculate_totals_for_records(records)
-        elif view_mode == "yearly":
-            target_year = view_mode_ref.get('target_year') if view_mode_ref else None
-            if isinstance(target_year, int):
-                scoped_totals = _calculate_totals_for_year(summary, target_year)
-            if scoped_totals is None:
-                scoped_totals = _calculate_totals_for_records(records)
-        else:
-            scoped_totals = _calculate_totals_for_records(records)
+        # Calculate totals from records (multi-device support)
+        # Always use _calculate_totals_for_records() to ensure all devices are included
+        # Previously used summary-based calculations, but summary only contains current device data
+        scoped_totals = _calculate_totals_for_records(records)
 
         kpi_section = _create_kpi_section(summary, records, view_mode=view_mode, skip_limits=skip_limits, console=console, limits_from_db=limits_from_db, view_mode_ref=view_mode_ref, scoped_totals=scoped_totals)
 
@@ -1488,7 +1474,7 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
 
             # Get color mode and colors from view_mode_ref
             from src.config.defaults import DEFAULT_COLORS
-            color_mode = view_mode_ref.get('color_mode', 'gradient') if view_mode_ref else 'gradient'
+            color_mode = view_mode_ref.get('color_mode', 'solid') if view_mode_ref else 'solid'
             colors = view_mode_ref.get('colors', DEFAULT_COLORS) if view_mode_ref else DEFAULT_COLORS
 
             # Calculate recommended usage percentages
@@ -2320,57 +2306,36 @@ def _create_monthly_breakdown(
         "messages": 0
     })
 
-    use_summary = summary is not None and isinstance(target_year, int)
+    # Always calculate from records to ensure multi-device support
+    # Previously used summary.daily, but summary only contains current device data
+    from src.models.pricing import calculate_cost
 
-    if use_summary:
-        from datetime import datetime
+    for record in records:
+        if record.token_usage and record.timestamp:
+            timestamp = record.timestamp
+            if timestamp.tzinfo:
+                local_ts = timestamp.astimezone()
+            else:
+                local_ts = timestamp
 
-        for date_str, totals in summary.daily.items():
-            try:
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
-                continue
+            # Extract year-month from local timestamp
+            month = local_ts.strftime("%Y-%m")
 
-            if date_obj.year != target_year:
-                continue
+            monthly_data[month]["input_tokens"] += record.token_usage.input_tokens
+            monthly_data[month]["output_tokens"] += record.token_usage.output_tokens
+            monthly_data[month]["cache_creation"] += record.token_usage.cache_creation_tokens
+            monthly_data[month]["cache_read"] += record.token_usage.cache_read_tokens
+            monthly_data[month]["messages"] += 1
 
-            month = date_obj.strftime("%Y-%m")
-            bucket = monthly_data[month]
-            bucket["input_tokens"] += totals.input_tokens
-            bucket["output_tokens"] += totals.output_tokens
-            bucket["cache_creation"] += totals.cache_creation_tokens
-            bucket["cache_read"] += totals.cache_read_tokens
-            bucket["messages"] += totals.total_responses
-            bucket["cost"] += totals.total_cost
-    else:
-        from src.models.pricing import calculate_cost
-
-        for record in records:
-            if record.token_usage and record.timestamp:
-                timestamp = record.timestamp
-                if timestamp.tzinfo:
-                    local_ts = timestamp.astimezone()
-                else:
-                    local_ts = timestamp
-
-                # Extract year-month from local timestamp
-                month = local_ts.strftime("%Y-%m")
-
-                monthly_data[month]["input_tokens"] += record.token_usage.input_tokens
-                monthly_data[month]["output_tokens"] += record.token_usage.output_tokens
-                monthly_data[month]["cache_creation"] += record.token_usage.cache_creation_tokens
-                monthly_data[month]["cache_read"] += record.token_usage.cache_read_tokens
-                monthly_data[month]["messages"] += 1
-
-                if record.model and record.model != "<synthetic>":
-                    cost = calculate_cost(
-                        record.token_usage.input_tokens,
-                        record.token_usage.output_tokens,
-                        record.model,
-                        record.token_usage.cache_creation_tokens,
-                        record.token_usage.cache_read_tokens,
-                    )
-                    monthly_data[month]["cost"] += cost
+            if record.model and record.model != "<synthetic>":
+                cost = calculate_cost(
+                    record.token_usage.input_tokens,
+                    record.token_usage.output_tokens,
+                    record.model,
+                    record.token_usage.cache_creation_tokens,
+                    record.token_usage.cache_read_tokens,
+                )
+                monthly_data[month]["cost"] += cost
 
     if not monthly_data:
         return Panel(

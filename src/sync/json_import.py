@@ -128,6 +128,14 @@ def import_from_json(
         # Commit transaction
         conn.commit()
 
+        # Ensure sync_metadata table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sync_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+
         # Update sync metadata
         cursor.execute("""
             INSERT OR REPLACE INTO sync_metadata (key, value)
@@ -140,6 +148,11 @@ def import_from_json(
         """, (json_data["machine_name"],))
 
         conn.commit()
+
+        # Register machine in machines.db
+        from src.storage.machines_db import register_machine
+        machine_name = json_data["machine_name"]
+        register_machine(machine_name, machine_name)  # Use machine_name as hostname for imported data
 
     except Exception as e:
         # Rollback on any error
