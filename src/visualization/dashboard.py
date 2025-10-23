@@ -677,6 +677,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
+            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            opus_recommended_pct = 0
+            if limits.get('opus_reset'):
+                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+
             # Create table structure with 3 rows per limit
             # M1/M2 modes use no padding, M3/M4 modes use reduced padding for compact display
             table_padding = (0, 1) if (is_m3_mode or is_m4_mode) else (0, 0)
@@ -728,11 +733,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
 
-                # Opus uses same weekly recommended percentage as "all models"
-                if weekly_recommended_pct > 0:
+                # Opus uses its own reset time (opus_reset) which may differ from week_reset
+                if opus_recommended_pct > 0:
                     opus_bar = _create_usage_bar_with_recommended(
                         limits["opus_pct"],
-                        weekly_recommended_pct,
+                        opus_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
@@ -798,11 +803,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
 
-                # Opus uses same weekly recommended percentage as "all models"
-                if weekly_recommended_pct > 0:
+                # Opus uses its own reset time (opus_reset) which may differ from week_reset
+                if opus_recommended_pct > 0:
                     opus_bar = _create_usage_bar_with_recommended_separate(
                         limits["opus_pct"],
-                        weekly_recommended_pct,
+                        opus_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
@@ -865,11 +870,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
 
-                # Opus uses same weekly recommended percentage as "all models"
-                if weekly_recommended_pct > 0:
+                # Opus uses its own reset time (opus_reset) which may differ from week_reset
+                if opus_recommended_pct > 0:
                     opus_bar = _create_usage_bar_with_recommended(
                         limits["opus_pct"],
-                        weekly_recommended_pct,
+                        opus_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
@@ -940,11 +945,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
                 limits_table.add_row("Current week (Opus)")
 
-                # Opus uses same weekly recommended percentage as "all models"
-                if weekly_recommended_pct > 0:
+                # Opus uses its own reset time (opus_reset) which may differ from week_reset
+                if opus_recommended_pct > 0:
                     opus_bar = _create_usage_bar_with_recommended_separate(
                         limits["opus_pct"],
-                        weekly_recommended_pct,
+                        opus_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
