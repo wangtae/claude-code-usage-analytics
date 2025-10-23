@@ -205,12 +205,13 @@ class SyncManager:
                 json_str = self.client.get_file_content(self.gist_id, current_file)
                 json_data = json.loads(json_str)
 
-                # Get database path (convert to Path if string)
-                db_path_str = get_db_path()
-                db_path = Path(db_path_str) if db_path_str else None
+                # Get database path for this specific machine
+                from src.storage.snapshot_db import get_storage_dir
+                storage_dir = get_storage_dir()
+                machine_db_path = storage_dir / f"usage_history_{machine_name}.db"
 
-                # Import to local database
-                import_stats = import_from_json(json_data, db_path=db_path)
+                # Import to machine-specific database
+                import_stats = import_from_json(json_data, db_path=machine_db_path)
 
                 stats["new_records"] += import_stats["new_records"]
                 stats["duplicate_records"] += import_stats["duplicate_records"]
@@ -383,12 +384,14 @@ class SyncManager:
             export_date: Export timestamp
         """
         import sqlite3
+        from src.storage.snapshot_db import get_default_db_path
 
+        # Use custom path if set, otherwise use auto-detected path
         db_path_str = get_db_path()
-        if not db_path_str:
-            return
-
-        db_path = Path(db_path_str)
+        if db_path_str:
+            db_path = Path(db_path_str)
+        else:
+            db_path = get_default_db_path()
         if not db_path.exists():
             return
 

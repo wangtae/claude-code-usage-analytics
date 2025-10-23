@@ -628,7 +628,7 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                     from src.config.defaults import DEFAULT_COLORS
                     prefs = load_user_preferences()
                     view_mode_ref['usage_display_mode'] = int(prefs.get('usage_display_mode', '0'))
-                    view_mode_ref['color_mode'] = prefs.get('color_mode', 'gradient')
+                    view_mode_ref['color_mode'] = prefs.get('color_mode', 'solid')
                     view_mode_ref['colors'] = {
                         'color_solid': prefs.get('color_solid', DEFAULT_COLORS['color_solid']),
                         'color_gradient_low': prefs.get('color_gradient_low', DEFAULT_COLORS['color_gradient_low']),
@@ -847,7 +847,7 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     # Track current view mode, time offset, usage display mode, and color mode
     # Initialize from DB settings
     usage_display_mode = int(prefs.get('usage_display_mode', '0'))
-    color_mode = prefs.get('color_mode', 'gradient')
+    color_mode = prefs.get('color_mode', 'solid')
     colors = {
         'color_solid': prefs.get('color_solid', DEFAULT_COLORS['color_solid']),
         'color_gradient_low': prefs.get('color_gradient_low', DEFAULT_COLORS['color_gradient_low']),
@@ -987,7 +987,7 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     # Track current view mode, time offset, usage display mode, and color mode
     # Initialize from DB settings
     usage_display_mode = int(prefs.get('usage_display_mode', '0'))
-    color_mode = prefs.get('color_mode', 'gradient')
+    color_mode = prefs.get('color_mode', 'solid')
     colors = {
         'color_solid': prefs.get('color_solid', DEFAULT_COLORS['color_solid']),
         'color_gradient_low': prefs.get('color_gradient_low', DEFAULT_COLORS['color_gradient_low']),
