@@ -292,6 +292,151 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
         return 0
 
 
+def _calculate_distributed_recommended_pct(reset_str: str) -> float:
+    """
+    Calculate recommended usage by distributing 100% evenly across remaining time until reset.
+
+    This function distributes the quota uniformly over the remaining time period,
+    updating every minute. As time passes, the recommended percentage increases,
+    causing the exceeded (red) portion to gradually decrease.
+
+    Strategy:
+    - Total period: 7 days (from week_start to reset)
+    - Distribute 100% evenly across all remaining minutes
+    - Each minute increases recommended usage proportionally
+    - Exceeded usage (red bar) shrinks as time progresses
+
+    Args:
+        reset_str: Reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)")
+
+    Returns:
+        Recommended usage percentage (0-100) for current time
+
+    Example:
+        Reset: Oct 27, 9:59am
+        Week start: Oct 24, 9:59am (reset - 7 days)
+        Now: Oct 24, 10:48am (49 minutes elapsed)
+
+        Total period: 7 days = 10,080 minutes
+        Elapsed: 49 minutes
+        Recommended: (49 / 10,080) × 100 = 0.49%
+
+        If actual usage is 100%, then:
+        - Blue bar: 0.49% (recommended portion used)
+        - Red bar: 99.51% (exceeded portion)
+
+        After 1 minute (10:49am):
+        - Recommended: (50 / 10,080) × 100 = 0.50%
+        - Red bar shrinks to 99.50%
+    """
+    from datetime import datetime, timezone as dt_timezone, timedelta
+    from zoneinfo import ZoneInfo
+    import re
+
+    try:
+        # Extract timezone
+        tz_match = re.search(r'\((.*?)\)', reset_str)
+        tz_name = tz_match.group(1) if tz_match else 'UTC'
+        reset_no_tz = reset_str.split(' (')[0].strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
+
+        # Try to parse "Oct 17, 10am" format (with date)
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+
+        # If no date found, try time-only format like "9:59am"
+        if not date_match:
+            time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not time_match:
+                return 0
+
+            # Use today's date with the given time
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2)) if time_match.group(2) else 0
+            meridiem = time_match.group(3)
+
+            # Convert to 24-hour format
+            if meridiem == 'pm' and hour != 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+
+            # Get current time and create reset datetime for today
+            now = datetime.now(tz)
+            reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            # If reset is in the past today, find the next occurrence
+            # Weekly resets happen within the next 7 days (shown without date in Claude)
+            while reset_dt < now:
+                reset_dt = reset_dt + timedelta(days=1)
+                # Stop if we've gone more than 7 days (safety check)
+                if (reset_dt - now).days > 7:
+                    break
+        else:
+            # Parse full date format
+            month_name = date_match.group(1)
+            day = int(date_match.group(2))
+            hour = int(date_match.group(3))
+            minute = int(date_match.group(4)) if date_match.group(4) else 0
+            meridiem = date_match.group(5)
+
+            # Convert to 24-hour format
+            if meridiem == 'pm' and hour != 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+
+            # Parse month
+            year = datetime.now(tz).year
+            month_num = datetime.strptime(month_name, '%b').month
+
+            # Create reset datetime
+            reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+
+            # Get current time
+            now = datetime.now(tz)
+
+            # If reset is in the past, it might be next year
+            if reset_dt < now:
+                # Check if adding 7 days puts us in the future
+                next_reset = reset_dt + timedelta(days=7)
+                if next_reset > now:
+                    reset_dt = next_reset
+                else:
+                    # Must be next year
+                    reset_dt = reset_dt.replace(year=year + 1)
+
+        # Week started 7 days before reset
+        week_start = reset_dt - timedelta(days=7)
+
+        # If we're before the week start, we're looking at next week
+        if now < week_start:
+            return 0
+
+        # If we're after the reset, we're in a new week
+        if now >= reset_dt:
+            return 0
+
+        # Calculate total period in minutes (always 7 days)
+        total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+
+        # Calculate elapsed minutes since week start
+        elapsed = now - week_start
+        elapsed_minutes = elapsed.total_seconds() / 60
+
+        # Calculate recommended percentage based on elapsed time
+        # This distributes 100% evenly across the entire 7-day period
+        recommended_pct = (elapsed_minutes / total_period_minutes) * 100
+
+        return min(100, recommended_pct)
+
+    except Exception:
+        return 0
+
+
 def _get_bar_color(percentage: int, color_mode: str, colors: dict) -> str:
     """
     Get color based on color mode and usage percentage.
@@ -689,10 +834,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
-            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            # Parse opus reset time with distributed calculation (separate from week reset)
+            # Opus uses even distribution across 7-day period for gradual red bar reduction
             opus_recommended_pct = 0
             if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
 
             # Create table structure with 3 rows per limit
             # M1/M2 modes use no padding, M3/M4 modes use reduced padding for compact display
@@ -1508,10 +1654,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
-            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            # Parse opus reset time with distributed calculation (separate from week reset)
+            # Opus uses even distribution across 7-day period for gradual red bar reduction
             opus_recommended_pct = 0
             if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
 
             # Calculate bar width based on terminal width (same as usage mode)
             terminal_width = console.width if console else 120
