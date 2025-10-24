@@ -156,23 +156,32 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
 
 def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> float:
     """
-    Calculate recommended usage percentage for current week based on elapsed minutes.
+    Calculate recommended usage percentage based on 24-hour window from week start.
 
-    Uses minute-based calculation for maximum accuracy, since week resets can occur at any time
-    (e.g., Friday 9:59am). This provides the most precise recommendations.
+    Goal: Encourage consistent daily usage by recommending to use all quota within
+    the first 24 hours of the week. This prevents uneven distribution and ensures
+    users have access to their full quota when they need it.
+
+    Uses minute-based calculation for maximum accuracy, since week resets can occur
+    at any time (e.g., Friday 9:59am).
 
     Args:
-        week_reset_str: Week reset time string (e.g., "Oct 24, 10am (Asia/Seoul)")
-        weekly_days: Number of days to use for calculation (from settings)
-                     Converted to minutes internally (e.g., 7 days = 10,080 minutes)
+        week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)")
+        weekly_days: Unused parameter (kept for compatibility with settings)
+                     Calculation always uses 24-hour window regardless of this value
 
     Returns:
         Recommended usage percentage (0-100)
+        - 0-100% during first 24 hours based on elapsed time
+        - 100% after 24 hours have passed
 
     Example:
-        Reset: Friday 09:59, Current: Monday 14:00
-        Elapsed: 4,561 minutes, Total: 10,080 minutes (7 days)
-        Recommended: (4,561 / 10,080) * 100 = 45.2%
+        Week start: Oct 24, 9:59am
+        Current: Oct 24, 10:41am (42 minutes elapsed)
+        Recommended: (42 / 1440) * 100 = 2.9%
+
+        After 24 hours (Oct 25, 10:00am+):
+        Recommended: 100% (all quota should be used)
     """
     from datetime import datetime, timezone as dt_timezone, timedelta
     from zoneinfo import ZoneInfo
@@ -265,15 +274,18 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
         if now >= reset_dt:
             return 0
 
-        # Calculate total minutes in the period (e.g., 7 days = 10,080 minutes)
-        total_minutes = weekly_days * 24 * 60
+        # Calculate recommended usage based on 24-hour window
+        # Goal: Use all quota within next 24 hours from week start
+        # This ensures consistent daily usage instead of uneven distribution
+        total_minutes_24h = 24 * 60  # 1440 minutes (24 hours)
 
-        # Calculate elapsed minutes (more precise than hours or days)
+        # Calculate elapsed minutes since week start
         elapsed = now - week_start
         elapsed_minutes = elapsed.total_seconds() / 60  # seconds to minutes
 
-        # Calculate recommended percentage based on elapsed time in minutes
-        recommended_pct = (elapsed_minutes / total_minutes) * 100
+        # Calculate recommended percentage based on 24-hour window
+        # After 24 hours, recommended stays at 100%
+        recommended_pct = (elapsed_minutes / total_minutes_24h) * 100
         return min(100, recommended_pct)
 
     except Exception:
