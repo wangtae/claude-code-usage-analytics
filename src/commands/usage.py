@@ -392,29 +392,32 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
     from src.sync.token_manager import TokenManager
     from src.config.defaults import DEFAULT_PREFERENCES
 
-    # Initial sync on startup (if enabled)
-    prefs = load_user_preferences()
-    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
-    if auto_sync == '1':
-        # Check if token is configured
-        token_manager = TokenManager()
-        if token_manager.has_token():
-            try:
-                sync_status_ref['is_syncing'] = True
-                sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+    # Wait 5 seconds before first sync to allow dashboard to load
+    # This prevents blocking the UI on startup
+    if not stop_event.wait(5):
+        # Initial sync on startup (if enabled)
+        prefs = load_user_preferences()
+        auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+        if auto_sync == '1':
+            # Check if token is configured
+            token_manager = TokenManager()
+            if token_manager.has_token():
+                try:
+                    sync_status_ref['is_syncing'] = True
+                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
 
-                manager = SyncManager()
+                    manager = SyncManager()
 
-                # Initial pull to get latest data from other devices
-                if sync_mode in ['bidirectional', 'pull_only']:
-                    manager.pull()
+                    # Initial pull to get latest data from other devices
+                    if sync_mode in ['bidirectional', 'pull_only']:
+                        manager.pull()
 
-                sync_status_ref['last_sync'] = datetime.now()
-                sync_status_ref['is_syncing'] = False
-                sync_status_ref['error'] = None
-            except Exception as e:
-                sync_status_ref['is_syncing'] = False
-                sync_status_ref['error'] = str(e)
+                    sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['is_syncing'] = False
+                    sync_status_ref['error'] = None
+                except Exception as e:
+                    sync_status_ref['is_syncing'] = False
+                    sync_status_ref['error'] = str(e)
 
     # Periodic sync loop
     while not stop_event.is_set():
