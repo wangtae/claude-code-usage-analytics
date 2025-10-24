@@ -387,19 +387,21 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
         stop_event: Threading event to signal when to stop syncing
         sync_status_ref: Dict to track sync status (last_sync, is_syncing, error)
     """
-    from src.storage.snapshot_db import get_user_preference
+    from src.storage.snapshot_db import load_user_preferences
     from src.sync.sync_manager import SyncManager
     from src.sync.token_manager import TokenManager
+    from src.config.defaults import DEFAULT_PREFERENCES
 
     # Initial sync on startup (if enabled)
-    auto_sync = get_user_preference('gist_auto_sync', '1')
+    prefs = load_user_preferences()
+    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
     if auto_sync == '1':
         # Check if token is configured
         token_manager = TokenManager()
         if token_manager.has_token():
             try:
                 sync_status_ref['is_syncing'] = True
-                sync_mode = get_user_preference('gist_sync_mode', 'bidirectional')
+                sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
 
                 manager = SyncManager()
 
@@ -417,7 +419,8 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
     # Periodic sync loop
     while not stop_event.is_set():
         # Get current interval setting
-        interval_str = get_user_preference('gist_sync_interval', '600')
+        prefs = load_user_preferences()
+        interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
         try:
             interval = int(interval_str)
         except ValueError:
@@ -427,7 +430,8 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
             break  # Stop event was set during wait
 
         # Check if auto-sync is enabled
-        auto_sync = get_user_preference('gist_auto_sync', '1')
+        prefs = load_user_preferences()
+        auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
         if auto_sync != '1':
             continue
 
@@ -438,7 +442,7 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
 
         try:
             sync_status_ref['is_syncing'] = True
-            sync_mode = get_user_preference('gist_sync_mode', 'bidirectional')
+            sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
 
             manager = SyncManager()
 
