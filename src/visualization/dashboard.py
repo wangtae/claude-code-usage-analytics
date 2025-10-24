@@ -4005,8 +4005,8 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("]efresh: ", style=DIM)
             footer.append(f"{last_update_time} ", style="bold cyan")
 
-        # Add Gist sync status (if available)
-        if view_mode_ref and view_mode_ref.get('sync_status'):
+        # Add Gist sync status (if available) - hide in usage mode for compact display
+        if view_mode != "usage" and view_mode_ref and view_mode_ref.get('sync_status'):
             sync_status = view_mode_ref['sync_status']
             footer.append(" | ", style=DIM)
             footer.append("Gist: ", style=DIM)
