@@ -3628,6 +3628,39 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("]efresh: ", style=DIM)
             footer.append(f"{last_update_time} ", style="bold cyan")
 
+        # Add Gist sync status (if available)
+        if view_mode_ref and view_mode_ref.get('sync_status'):
+            sync_status = view_mode_ref['sync_status']
+            footer.append(" | ", style=DIM)
+            footer.append("Gist: ", style=DIM)
+
+            if sync_status.get('is_syncing'):
+                footer.append("Syncing... ", style="bold yellow")
+                footer.append("◼", style="bold yellow blink")
+            elif sync_status.get('error'):
+                footer.append("✗ Error ", style="bold red")
+            elif sync_status.get('last_sync'):
+                last_sync = sync_status['last_sync']
+                now = datetime.now()
+                diff = now - last_sync
+
+                # Format time ago
+                if diff.total_seconds() < 60:
+                    time_ago = "Just now"
+                elif diff.total_seconds() < 3600:
+                    minutes = int(diff.total_seconds() / 60)
+                    time_ago = f"{minutes}분 전"
+                elif diff.total_seconds() < 86400:
+                    hours = int(diff.total_seconds() / 3600)
+                    time_ago = f"{hours}시간 전"
+                else:
+                    days = int(diff.total_seconds() / 86400)
+                    time_ago = f"{days}일 전"
+
+                footer.append(f"✓ {time_ago}", style="bold green")
+            else:
+                footer.append("Not synced", style=DIM)
+
     else:
         # No live mode, just date range if provided
         if date_range:

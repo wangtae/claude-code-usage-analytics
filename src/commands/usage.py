@@ -376,6 +376,89 @@ def _limits_updater_thread(stop_event: threading.Event, interval: int = 60) -> N
                 pass  # Silently ignore errors in background thread
 
 
+def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> None:
+    """
+    Background thread that syncs data with GitHub Gist at regular intervals.
+
+    Performs bidirectional sync (pull + push) based on user preferences.
+    Silent failures ensure dashboard continues running even if sync fails.
+
+    Args:
+        stop_event: Threading event to signal when to stop syncing
+        sync_status_ref: Dict to track sync status (last_sync, is_syncing, error)
+    """
+    from src.storage.snapshot_db import get_user_preference
+    from src.sync.sync_manager import SyncManager
+    from src.sync.token_manager import TokenManager
+
+    # Initial sync on startup (if enabled)
+    auto_sync = get_user_preference('gist_auto_sync', '1')
+    if auto_sync == '1':
+        # Check if token is configured
+        token_manager = TokenManager()
+        if token_manager.has_token():
+            try:
+                sync_status_ref['is_syncing'] = True
+                sync_mode = get_user_preference('gist_sync_mode', 'bidirectional')
+
+                manager = SyncManager()
+
+                # Initial pull to get latest data from other devices
+                if sync_mode in ['bidirectional', 'pull_only']:
+                    manager.pull()
+
+                sync_status_ref['last_sync'] = datetime.now()
+                sync_status_ref['is_syncing'] = False
+                sync_status_ref['error'] = None
+            except Exception as e:
+                sync_status_ref['is_syncing'] = False
+                sync_status_ref['error'] = str(e)
+
+    # Periodic sync loop
+    while not stop_event.is_set():
+        # Get current interval setting
+        interval_str = get_user_preference('gist_sync_interval', '600')
+        try:
+            interval = int(interval_str)
+        except ValueError:
+            interval = 600  # Default to 10 minutes if invalid
+
+        if stop_event.wait(interval):
+            break  # Stop event was set during wait
+
+        # Check if auto-sync is enabled
+        auto_sync = get_user_preference('gist_auto_sync', '1')
+        if auto_sync != '1':
+            continue
+
+        # Check if token is configured
+        token_manager = TokenManager()
+        if not token_manager.has_token():
+            continue
+
+        try:
+            sync_status_ref['is_syncing'] = True
+            sync_mode = get_user_preference('gist_sync_mode', 'bidirectional')
+
+            manager = SyncManager()
+
+            # Bidirectional: pull then push
+            if sync_mode in ['bidirectional', 'pull_only']:
+                manager.pull()
+
+            if sync_mode in ['bidirectional', 'push_only']:
+                # Use auto-merge (skip_conflict_check=False)
+                manager.push(skip_conflict_check=False)
+
+            sync_status_ref['last_sync'] = datetime.now()
+            sync_status_ref['is_syncing'] = False
+            sync_status_ref['error'] = None
+
+        except Exception as e:
+            sync_status_ref['is_syncing'] = False
+            sync_status_ref['error'] = str(e)
+
+
 def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None:
     """
     Listen for keyboard input to switch view modes.
@@ -906,6 +989,18 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
+    # Start background Gist sync thread for automatic synchronization
+    sync_status_ref = {
+        'last_sync': None,
+        'is_syncing': False,
+        'error': None,
+    }
+    sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
+    sync_thread.start()
+
+    # Store sync status reference for dashboard display
+    view_mode_ref['sync_status'] = sync_status_ref
+
     # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits=False, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)
 
@@ -1041,6 +1136,18 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     # Start background limits updater thread for periodic updates
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
+
+    # Start background Gist sync thread for automatic synchronization
+    sync_status_ref = {
+        'last_sync': None,
+        'is_syncing': False,
+        'error': None,
+    }
+    sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
+    sync_thread.start()
+
+    # Store sync status reference for dashboard display
+    view_mode_ref['sync_status'] = sync_status_ref
 
     # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)

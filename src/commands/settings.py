@@ -40,7 +40,7 @@ def run(console: Console) -> None:
             _display_settings_menu(console, prefs, machine_name, db_path)
 
             # Wait for user input
-            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-2, 8-9, a-k, e-f, o-p, r[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
+            console.print("\n[dim]Enter setting key to edit ([#ff8800]1-2, 8-9, a-n, e-f, o-p, r[/#ff8800]), [#ff8800]\\[x][/#ff8800] reset to defaults, or [#ff8800]ESC[/#ff8800] to return...[/dim]", end="")
 
             key = _read_key()
 
@@ -81,6 +81,15 @@ def run(console: Console) -> None:
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'k':  # Weekly Recommended Days
                 setting_num = 17
+                _edit_setting(console, setting_num, prefs, save_user_preference)
+            elif key.lower() == 'l':  # Gist Auto-Sync
+                setting_num = 18
+                _edit_setting(console, setting_num, prefs, save_user_preference)
+            elif key.lower() == 'm':  # Gist Sync Interval
+                setting_num = 19
+                _edit_setting(console, setting_num, prefs, save_user_preference)
+            elif key.lower() == 'n':  # Gist Sync Mode
+                setting_num = 20
                 _edit_setting(console, setting_num, prefs, save_user_preference)
             elif key.lower() == 'e':  # Gist Setup
                 _gist_setup(console)
@@ -365,7 +374,29 @@ def _display_settings_menu(console: Console, prefs: dict, machine_name: str, db_
 
     # Empty row - Gist & Database section
     settings_table.add_row("", "", "")
-    settings_table.add_row("[dim]───[/dim]", "[dim]Gist & Database[/dim]", "[dim]─────────────────[/dim]")
+    settings_table.add_row("[dim]───[/dim]", "[dim]Gist Auto-Sync & Database[/dim]", "[dim]────────────────[/dim]")
+
+    # Gist auto-sync enabled
+    gist_auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+    auto_sync_display = "Enabled" if gist_auto_sync == "1" else "Disabled"
+    settings_table.add_row("[#ff8800]\\[l][/#ff8800]", "Gist Auto-Sync", auto_sync_display)
+
+    # Gist sync interval
+    gist_sync_interval = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    interval_minutes = int(gist_sync_interval) // 60
+    settings_table.add_row("[#ff8800]\\[m][/#ff8800]", "Sync Interval (min)", str(interval_minutes))
+
+    # Gist sync mode
+    gist_sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+    mode_display = {
+        'bidirectional': 'Bidirectional (Pull+Push)',
+        'pull_only': 'Pull Only',
+        'push_only': 'Push Only'
+    }.get(gist_sync_mode, gist_sync_mode)
+    settings_table.add_row("[#ff8800]\\[n][/#ff8800]", "Sync Mode", mode_display)
+
+    # Empty row
+    settings_table.add_row("", "", "")
 
     # Gist setup
     settings_table.add_row("[#ff8800]\\[e][/#ff8800]", "Gist Setup", "[dim]Configure GitHub token & sync[/dim]")
@@ -438,6 +469,21 @@ def _edit_setting(console: Console, setting_num: int, prefs: dict, save_func) ->
     # Handle weekly recommended days setting separately (17)
     if setting_num == 17:
         _edit_weekly_days_setting(console, prefs, save_func)
+        return
+
+    # Handle Gist auto-sync setting separately (18)
+    if setting_num == 18:
+        _edit_gist_auto_sync_setting(console, prefs, save_func)
+        return
+
+    # Handle Gist sync interval setting separately (19)
+    if setting_num == 19:
+        _edit_gist_sync_interval_setting(console, prefs, save_func)
+        return
+
+    # Handle Gist sync mode setting separately (20)
+    if setting_num == 20:
+        _edit_gist_sync_mode_setting(console, prefs, save_func)
         return
 
     if setting_num not in setting_map:
@@ -1923,3 +1969,139 @@ def _program_reset(console: Console) -> None:
         console.print(f"\n[red]✗ 재설정 중 오류 발생: {e}[/red]")
         console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
         input()
+
+
+
+def _edit_gist_auto_sync_setting(console: Console, prefs: dict, save_func) -> None:
+    """
+    Toggle Gist auto-sync on/off.
+
+    Args:
+        console: Rich console for rendering
+        prefs: Current preferences dictionary
+        save_func: Function to save preference
+    """
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    current_value = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+    current_enabled = (current_value == '1')
+
+    console.print()
+    console.print("[bold]Gist Auto-Sync[/bold]")
+    console.print(f"[dim]Current: {'Enabled' if current_enabled else 'Disabled'}[/dim]")
+    console.print()
+
+    # Toggle value
+    new_value = '0' if current_enabled else '1'
+    save_func('gist_auto_sync', new_value)
+
+    console.print(f"[green]✓ Gist Auto-Sync {'enabled' if new_value == '1' else 'disabled'}[/green]")
+    console.print("[dim]Changes take effect when you exit settings[/dim]")
+    console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+    input()
+
+
+def _edit_gist_sync_interval_setting(console: Console, prefs: dict, save_func) -> None:
+    """
+    Edit Gist sync interval.
+
+    Args:
+        console: Rich console for rendering
+        prefs: Current preferences dictionary
+        save_func: Function to save preference
+    """
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    current_value = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    current_minutes = int(current_value) // 60
+
+    console.print()
+    console.print("[bold]Gist Sync Interval[/bold]")
+    console.print(f"[dim]Current: {current_minutes} minutes ({current_value} seconds)[/dim]")
+    console.print(f"[dim]Default: 10 minutes (600 seconds)[/dim]")
+    console.print()
+    console.print("[dim]Enter interval in minutes (minimum 1), 'd' for default, or press Enter to keep current:[/dim]")
+
+    try:
+        sys.stdout.write("> ")
+        sys.stdout.flush()
+        new_value = input().strip()
+
+        if new_value:
+            # Check for default reset
+            if new_value.lower() in ['d', 'default']:
+                from src.storage.snapshot_db import delete_user_preference
+                delete_user_preference('gist_sync_interval')
+                console.print(f"[green]✓ Sync interval reset to default: 10 minutes[/green]")
+                console.print(f"[dim]  (Using value from src/config/defaults.py)[/dim]")
+            else:
+                try:
+                    minutes = int(new_value)
+                    if minutes >= 1:
+                        seconds = minutes * 60
+                        save_func('gist_sync_interval', str(seconds))
+                        console.print(f"[green]✓ Sync interval updated to {minutes} minutes ({seconds} seconds)[/green]")
+                    else:
+                        console.print("[red]✗ Interval must be at least 1 minute[/red]")
+                except ValueError:
+                    console.print("[red]✗ Invalid number[/red]")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Input cancelled[/yellow]")
+
+    console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+    input()
+
+
+def _edit_gist_sync_mode_setting(console: Console, prefs: dict, save_func) -> None:
+    """
+    Edit Gist sync mode (bidirectional, pull_only, push_only).
+
+    Args:
+        console: Rich console for rendering
+        prefs: Current preferences dictionary
+        save_func: Function to save preference
+    """
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    current_value = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+
+    console.print()
+    console.print("[bold]Gist Sync Mode[/bold]")
+    console.print(f"[dim]Current: {current_value}[/dim]")
+    console.print()
+    console.print("[dim]Available modes:[/dim]")
+    console.print("  [cyan]1[/cyan] - Bidirectional (Pull + Push) [dim]- recommended[/dim]")
+    console.print("  [cyan]2[/cyan] - Pull Only [dim]- download only[/dim]")
+    console.print("  [cyan]3[/cyan] - Push Only [dim]- upload only[/dim]")
+    console.print()
+    console.print("[dim]Enter mode number (1-3), 'd' for default, or press Enter to keep current:[/dim]")
+
+    try:
+        sys.stdout.write("> ")
+        sys.stdout.flush()
+        new_value = input().strip()
+
+        if new_value:
+            # Check for default reset
+            if new_value.lower() in ['d', 'default']:
+                from src.storage.snapshot_db import delete_user_preference
+                delete_user_preference('gist_sync_mode')
+                console.print(f"[green]✓ Sync mode reset to default: bidirectional[/green]")
+                console.print(f"[dim]  (Using value from src/config/defaults.py)[/dim]")
+            elif new_value == '1':
+                save_func('gist_sync_mode', 'bidirectional')
+                console.print("[green]✓ Sync mode updated to: Bidirectional (Pull + Push)[/green]")
+            elif new_value == '2':
+                save_func('gist_sync_mode', 'pull_only')
+                console.print("[green]✓ Sync mode updated to: Pull Only[/green]")
+            elif new_value == '3':
+                save_func('gist_sync_mode', 'push_only')
+                console.print("[green]✓ Sync mode updated to: Push Only[/green]")
+            else:
+                console.print("[red]✗ Invalid mode number. Must be 1-3[/red]")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Input cancelled[/yellow]")
+
+    console.print("\n[dim]Enter를 눌러 돌아가기...[/dim]")
+    input()
+
