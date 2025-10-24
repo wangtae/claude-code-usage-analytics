@@ -1389,7 +1389,7 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
 
     Args:
         records: List of usage records
-        week_reset_str: Week reset time string (e.g., "10/31 ($556.15)")
+        week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)" or "10/31 9:59am")
                        If None, falls back to last 7 days
 
     Returns:
@@ -1397,16 +1397,96 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
     # Parse week start time (reset - 7 days)
     week_start = None
 
     if week_reset_str:
         try:
-            # Week reset is 7 days from week start
-            # Use simple logic: records since 7 days ago covers current week
-            now = datetime.now(timezone.utc)
-            week_start = now - timedelta(days=7)
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', week_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = week_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/31 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
         except Exception:
             pass
 
@@ -1437,7 +1517,7 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
 
     Args:
         records: List of usage records
-        opus_reset_str: Opus reset time string (e.g., "10/27 ($280.96)")
+        opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
                        If None, falls back to last 7 days
 
     Returns:
@@ -1445,16 +1525,96 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
     # Parse opus week start time (reset - 7 days)
     week_start = None
 
     if opus_reset_str:
         try:
-            # Opus reset is 7 days from week start
-            # Use simple logic: records since 7 days ago covers current week
-            now = datetime.now(timezone.utc)
-            week_start = now - timedelta(days=7)
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', opus_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = opus_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/27 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
         except Exception:
             pass
 
@@ -3875,8 +4035,48 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                     time_ago = f"{days}일 전"
 
                 footer.append(f"✓ {time_ago}", style="bold green")
+
+                # Show next sync time
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    time_until = next_sync - now
+
+                    # Format time until next sync
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            next_text = f" (다음: {seconds}초 후)"
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            next_text = f" (다음: {minutes}분 후)"
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            next_text = f" (다음: {hours}시간 {minutes}분 후)"
+
+                        footer.append(next_text, style=DIM)
             else:
-                footer.append("Not synced", style=DIM)
+                # Not synced yet - show when next sync will happen
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    now = datetime.now()
+                    time_until = next_sync - now
+
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            footer.append(f"Not synced (다음: {seconds}초 후)", style=DIM)
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            footer.append(f"Not synced (다음: {minutes}분 후)", style=DIM)
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            footer.append(f"Not synced (다음: {hours}시간 {minutes}분 후)", style=DIM)
+                    else:
+                        footer.append("Not synced", style=DIM)
+                else:
+                    footer.append("Not synced", style=DIM)
 
     else:
         # No live mode, just date range if provided

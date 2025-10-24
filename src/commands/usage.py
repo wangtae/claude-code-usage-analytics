@@ -398,6 +398,12 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
         # Initial sync on startup (if enabled)
         prefs = load_user_preferences()
         auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+        interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+        try:
+            interval = int(interval_str)
+        except ValueError:
+            interval = 600  # Default to 10 minutes if invalid
+
         if auto_sync == '1':
             # Check if token is configured
             token_manager = TokenManager()
@@ -413,11 +419,16 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
                         manager.pull()
 
                     sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
                     sync_status_ref['is_syncing'] = False
                     sync_status_ref['error'] = None
                 except Exception as e:
                     sync_status_ref['is_syncing'] = False
                     sync_status_ref['error'] = str(e)
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+            else:
+                # Token not configured, set next sync time anyway
+                sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
 
     # Periodic sync loop
     while not stop_event.is_set():
@@ -458,12 +469,14 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
                 manager.push(skip_conflict_check=False)
 
             sync_status_ref['last_sync'] = datetime.now()
+            sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
             sync_status_ref['is_syncing'] = False
             sync_status_ref['error'] = None
 
         except Exception as e:
             sync_status_ref['is_syncing'] = False
             sync_status_ref['error'] = str(e)
+            sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
 
 
 def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None:
