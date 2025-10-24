@@ -810,10 +810,10 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             week_reset = format_reset_date(limits['week_reset'])
             opus_reset = format_reset_date(limits['opus_reset'])
 
-            # Calculate costs for each limit period
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            # Calculate costs for each limit period (based on reset times)
+            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
 
             # Calculate recommended usage percentages
             from datetime import datetime, timezone as dt_timezone
@@ -1321,26 +1321,53 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
     console.print(footer, end="")
 
 
-def _calculate_session_cost(records: list[UsageRecord]) -> float:
+def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str = None) -> float:
     """
-    Calculate cost for session limit period (last 5 hours, all models).
+    Calculate cost for current session period (since last session reset, all models).
 
     Args:
         records: List of usage records
+        session_reset_str: Session reset time string (e.g., "2pm ($57.88)")
+                          If None, falls back to last 5 hours
 
     Returns:
         Total cost for session period
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    five_hours_ago = now - timedelta(hours=5)
+    # Parse session start time from reset string
+    # Reset string format: "2pm ($57.88)" or "2h 30m ($45.12)"
+    session_start = None
+
+    if session_reset_str:
+        try:
+            # Extract time part (before parenthesis)
+            time_part = session_reset_str.split('(')[0].strip()
+
+            # Parse "Xh Ym" format (e.g., "2h 30m")
+            hours_match = re.search(r'(\d+)h', time_part)
+            mins_match = re.search(r'(\d+)m', time_part)
+
+            if hours_match or mins_match:
+                hours = int(hours_match.group(1)) if hours_match else 0
+                minutes = int(mins_match.group(1)) if mins_match else 0
+                total_minutes = hours * 60 + minutes
+
+                now = datetime.now(timezone.utc)
+                session_start = now - timedelta(minutes=total_minutes)
+        except Exception:
+            pass
+
+    # Fallback: use 5 hours ago
+    if session_start is None:
+        now = datetime.now(timezone.utc)
+        session_start = now - timedelta(hours=5)
 
     session_cost = 0.0
     for record in records:
-        if record.timestamp >= five_hours_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= session_start and record.model and record.token_usage and record.model != "<synthetic>":
             cost = calculate_cost(
                 record.token_usage.input_tokens,
                 record.token_usage.output_tokens,
@@ -1353,60 +1380,252 @@ def _calculate_session_cost(records: list[UsageRecord]) -> float:
     return session_cost
 
 
-def _calculate_weekly_sonnet_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: str = None) -> float:
     """
-    Calculate cost for weekly sonnet usage (last 7 days, sonnet models only).
+    Calculate cost for current week period (since week reset, all models for "all models" quota).
+
+    Note: Despite the function name, this calculates ALL models cost for the weekly quota,
+    not just sonnet. The name is kept for backward compatibility.
 
     Args:
         records: List of usage records
+        week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)" or "10/31 9:59am")
+                       If None, falls back to last 7 days
 
     Returns:
-        Total cost for weekly sonnet usage
+        Total cost for weekly period (all models)
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Parse week start time (reset - 7 days)
+    week_start = None
+
+    if week_reset_str:
+        try:
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', week_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = week_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/31 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
-            # Check if it's a sonnet model
-            if "sonnet" in record.model.lower():
-                cost = calculate_cost(
-                    record.token_usage.input_tokens,
-                    record.token_usage.output_tokens,
-                    record.model,
-                    record.token_usage.cache_creation_tokens,
-                    record.token_usage.cache_read_tokens,
-                )
-                weekly_cost += cost
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
+            # Calculate cost for ALL models (not just sonnet)
+            cost = calculate_cost(
+                record.token_usage.input_tokens,
+                record.token_usage.output_tokens,
+                record.model,
+                record.token_usage.cache_creation_tokens,
+                record.token_usage.cache_read_tokens,
+            )
+            weekly_cost += cost
 
     return weekly_cost
 
 
-def _calculate_weekly_opus_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> float:
     """
-    Calculate cost for weekly opus usage (last 7 days, opus models only).
+    Calculate cost for current Opus week period (since opus reset, opus models only).
 
     Args:
         records: List of usage records
+        opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
+                       If None, falls back to last 7 days
 
     Returns:
-        Total cost for weekly opus usage
+        Total cost for opus weekly period
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Parse opus week start time (reset - 7 days)
+    week_start = None
+
+    if opus_reset_str:
+        try:
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', opus_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = opus_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/27 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
             # Check if it's an opus model
             if "opus" in record.model.lower():
                 cost = calculate_cost(
@@ -1624,11 +1843,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             week_reset = limits['week_reset']
             opus_reset = limits['opus_reset']
 
-            # Calculate costs for each limit period
+            # Calculate costs for each limit period (based on reset times)
             from datetime import timedelta
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
 
             # Get color mode and colors from view_mode_ref
             from src.config.defaults import DEFAULT_COLORS
@@ -3816,8 +4035,48 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                     time_ago = f"{days}일 전"
 
                 footer.append(f"✓ {time_ago}", style="bold green")
+
+                # Show next sync time
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    time_until = next_sync - now
+
+                    # Format time until next sync
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            next_text = f" (다음: {seconds}초 후)"
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            next_text = f" (다음: {minutes}분 후)"
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            next_text = f" (다음: {hours}시간 {minutes}분 후)"
+
+                        footer.append(next_text, style=DIM)
             else:
-                footer.append("Not synced", style=DIM)
+                # Not synced yet - show when next sync will happen
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    now = datetime.now()
+                    time_until = next_sync - now
+
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            footer.append(f"Not synced (다음: {seconds}초 후)", style=DIM)
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            footer.append(f"Not synced (다음: {minutes}분 후)", style=DIM)
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            footer.append(f"Not synced (다음: {hours}시간 {minutes}분 후)", style=DIM)
+                    else:
+                        footer.append("Not synced", style=DIM)
+                else:
+                    footer.append("Not synced", style=DIM)
 
     else:
         # No live mode, just date range if provided
