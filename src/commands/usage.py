@@ -392,45 +392,7 @@ def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> Non
     from src.sync.token_manager import TokenManager
     from src.config.defaults import DEFAULT_PREFERENCES
 
-    # Wait 5 seconds before first sync to allow dashboard to load
-    # This prevents blocking the UI on startup
-    if not stop_event.wait(5):
-        # Initial sync on startup (if enabled)
-        prefs = load_user_preferences()
-        auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
-        interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
-        try:
-            interval = int(interval_str)
-        except ValueError:
-            interval = 600  # Default to 10 minutes if invalid
-
-        if auto_sync == '1':
-            # Check if token is configured
-            token_manager = TokenManager()
-            if token_manager.has_token():
-                try:
-                    sync_status_ref['is_syncing'] = True
-                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
-
-                    manager = SyncManager()
-
-                    # Initial pull to get latest data from other devices
-                    if sync_mode in ['bidirectional', 'pull_only']:
-                        manager.pull()
-
-                    sync_status_ref['last_sync'] = datetime.now()
-                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
-                    sync_status_ref['is_syncing'] = False
-                    sync_status_ref['error'] = None
-                except Exception as e:
-                    sync_status_ref['is_syncing'] = False
-                    sync_status_ref['error'] = str(e)
-                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
-            else:
-                # Token not configured, set next sync time anyway
-                sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
-
-    # Periodic sync loop
+    # Periodic sync loop (initial sync already done synchronously at startup)
     while not stop_event.is_set():
         # Get current interval setting
         prefs = load_user_preferences()
@@ -1009,11 +971,11 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
-    # Start background Gist sync thread for automatic synchronization
-    # Calculate next sync time based on interval setting
+    # Do initial Gist sync synchronously to ensure fresh data from other devices
     from src.storage.snapshot_db import load_user_preferences
     from src.config.defaults import DEFAULT_PREFERENCES
     prefs = load_user_preferences()
+    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
     interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
     try:
         interval = int(interval_str)
@@ -1024,8 +986,39 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
         'last_sync': None,
         'is_syncing': False,
         'error': None,
-        'next_sync': datetime.now() + timedelta(seconds=5),  # First sync after 5 seconds
+        'next_sync': datetime.now() + timedelta(seconds=interval),
     }
+
+    if auto_sync == '1':
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        if token_manager.has_token():
+            with console.status("[bold #ff8800]Syncing with GitHub Gist...", spinner="dots", spinner_style="#ff8800"):
+                try:
+                    from src.sync.sync_manager import SyncManager
+                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+                    manager = SyncManager()
+
+                    # Initial pull to get latest data from other devices
+                    if sync_mode in ['bidirectional', 'pull_only']:
+                        pull_stats = manager.pull()
+                        new_records = pull_stats.get('new_records', 0)
+                        console.print(f"[dim green]✓ Gist sync: {new_records} new records pulled[/dim green]")
+                    else:
+                        console.print(f"[dim green]✓ Gist sync: pull disabled (mode: {sync_mode})[/dim green]")
+
+                    sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+                    sync_status_ref['error'] = None
+                except Exception as e:
+                    console.print(f"[dim yellow]⚠ Gist sync failed: {e}[/dim yellow]")
+                    sync_status_ref['error'] = str(e)
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+
+            # Give user time to see sync message
+            time.sleep(2)
+
+    # Start background Gist sync thread for periodic automatic synchronization
     sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
     sync_thread.start()
 
@@ -1168,11 +1161,11 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
-    # Start background Gist sync thread for automatic synchronization
-    # Calculate next sync time based on interval setting
+    # Do initial Gist sync synchronously to ensure fresh data from other devices
     from src.storage.snapshot_db import load_user_preferences
     from src.config.defaults import DEFAULT_PREFERENCES
     prefs = load_user_preferences()
+    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
     interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
     try:
         interval = int(interval_str)
@@ -1183,8 +1176,39 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
         'last_sync': None,
         'is_syncing': False,
         'error': None,
-        'next_sync': datetime.now() + timedelta(seconds=5),  # First sync after 5 seconds
+        'next_sync': datetime.now() + timedelta(seconds=interval),
     }
+
+    if auto_sync == '1':
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        if token_manager.has_token():
+            with console.status("[bold #ff8800]Syncing with GitHub Gist...", spinner="dots", spinner_style="#ff8800"):
+                try:
+                    from src.sync.sync_manager import SyncManager
+                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+                    manager = SyncManager()
+
+                    # Initial pull to get latest data from other devices
+                    if sync_mode in ['bidirectional', 'pull_only']:
+                        pull_stats = manager.pull()
+                        new_records = pull_stats.get('new_records', 0)
+                        console.print(f"[dim green]✓ Gist sync: {new_records} new records pulled[/dim green]")
+                    else:
+                        console.print(f"[dim green]✓ Gist sync: pull disabled (mode: {sync_mode})[/dim green]")
+
+                    sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+                    sync_status_ref['error'] = None
+                except Exception as e:
+                    console.print(f"[dim yellow]⚠ Gist sync failed: {e}[/dim yellow]")
+                    sync_status_ref['error'] = str(e)
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+
+            # Give user time to see sync message
+            time.sleep(2)
+
+    # Start background Gist sync thread for periodic automatic synchronization
     sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
     sync_thread.start()
 
