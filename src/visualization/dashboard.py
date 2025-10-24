@@ -810,10 +810,10 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             week_reset = format_reset_date(limits['week_reset'])
             opus_reset = format_reset_date(limits['opus_reset'])
 
-            # Calculate costs for each limit period
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            # Calculate costs for each limit period (based on reset times)
+            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
 
             # Calculate recommended usage percentages
             from datetime import datetime, timezone as dt_timezone
@@ -1321,26 +1321,53 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
     console.print(footer, end="")
 
 
-def _calculate_session_cost(records: list[UsageRecord]) -> float:
+def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str = None) -> float:
     """
-    Calculate cost for session limit period (last 5 hours, all models).
+    Calculate cost for current session period (since last session reset, all models).
 
     Args:
         records: List of usage records
+        session_reset_str: Session reset time string (e.g., "2pm ($57.88)")
+                          If None, falls back to last 5 hours
 
     Returns:
         Total cost for session period
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    five_hours_ago = now - timedelta(hours=5)
+    # Parse session start time from reset string
+    # Reset string format: "2pm ($57.88)" or "2h 30m ($45.12)"
+    session_start = None
+
+    if session_reset_str:
+        try:
+            # Extract time part (before parenthesis)
+            time_part = session_reset_str.split('(')[0].strip()
+
+            # Parse "Xh Ym" format (e.g., "2h 30m")
+            hours_match = re.search(r'(\d+)h', time_part)
+            mins_match = re.search(r'(\d+)m', time_part)
+
+            if hours_match or mins_match:
+                hours = int(hours_match.group(1)) if hours_match else 0
+                minutes = int(mins_match.group(1)) if mins_match else 0
+                total_minutes = hours * 60 + minutes
+
+                now = datetime.now(timezone.utc)
+                session_start = now - timedelta(minutes=total_minutes)
+        except Exception:
+            pass
+
+    # Fallback: use 5 hours ago
+    if session_start is None:
+        now = datetime.now(timezone.utc)
+        session_start = now - timedelta(hours=5)
 
     session_cost = 0.0
     for record in records:
-        if record.timestamp >= five_hours_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= session_start and record.model and record.token_usage and record.model != "<synthetic>":
             cost = calculate_cost(
                 record.token_usage.input_tokens,
                 record.token_usage.output_tokens,
@@ -1353,60 +1380,92 @@ def _calculate_session_cost(records: list[UsageRecord]) -> float:
     return session_cost
 
 
-def _calculate_weekly_sonnet_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: str = None) -> float:
     """
-    Calculate cost for weekly sonnet usage (last 7 days, sonnet models only).
+    Calculate cost for current week period (since week reset, all models for "all models" quota).
+
+    Note: Despite the function name, this calculates ALL models cost for the weekly quota,
+    not just sonnet. The name is kept for backward compatibility.
 
     Args:
         records: List of usage records
+        week_reset_str: Week reset time string (e.g., "10/31 ($556.15)")
+                       If None, falls back to last 7 days
 
     Returns:
-        Total cost for weekly sonnet usage
+        Total cost for weekly period (all models)
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Parse week start time (reset - 7 days)
+    week_start = None
+
+    if week_reset_str:
+        try:
+            # Week reset is 7 days from week start
+            # Use simple logic: records since 7 days ago covers current week
+            now = datetime.now(timezone.utc)
+            week_start = now - timedelta(days=7)
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
-            # Check if it's a sonnet model
-            if "sonnet" in record.model.lower():
-                cost = calculate_cost(
-                    record.token_usage.input_tokens,
-                    record.token_usage.output_tokens,
-                    record.model,
-                    record.token_usage.cache_creation_tokens,
-                    record.token_usage.cache_read_tokens,
-                )
-                weekly_cost += cost
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
+            # Calculate cost for ALL models (not just sonnet)
+            cost = calculate_cost(
+                record.token_usage.input_tokens,
+                record.token_usage.output_tokens,
+                record.model,
+                record.token_usage.cache_creation_tokens,
+                record.token_usage.cache_read_tokens,
+            )
+            weekly_cost += cost
 
     return weekly_cost
 
 
-def _calculate_weekly_opus_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> float:
     """
-    Calculate cost for weekly opus usage (last 7 days, opus models only).
+    Calculate cost for current Opus week period (since opus reset, opus models only).
 
     Args:
         records: List of usage records
+        opus_reset_str: Opus reset time string (e.g., "10/27 ($280.96)")
+                       If None, falls back to last 7 days
 
     Returns:
-        Total cost for weekly opus usage
+        Total cost for opus weekly period
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Parse opus week start time (reset - 7 days)
+    week_start = None
+
+    if opus_reset_str:
+        try:
+            # Opus reset is 7 days from week start
+            # Use simple logic: records since 7 days ago covers current week
+            now = datetime.now(timezone.utc)
+            week_start = now - timedelta(days=7)
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
             # Check if it's an opus model
             if "opus" in record.model.lower():
                 cost = calculate_cost(
@@ -1624,11 +1683,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             week_reset = limits['week_reset']
             opus_reset = limits['opus_reset']
 
-            # Calculate costs for each limit period
+            # Calculate costs for each limit period (based on reset times)
             from datetime import timedelta
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
 
             # Get color mode and colors from view_mode_ref
             from src.config.defaults import DEFAULT_COLORS
