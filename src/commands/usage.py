@@ -1010,10 +1010,21 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     limits_thread.start()
 
     # Start background Gist sync thread for automatic synchronization
+    # Calculate next sync time based on interval setting
+    from src.storage.snapshot_db import load_user_preferences
+    from src.config.defaults import DEFAULT_PREFERENCES
+    prefs = load_user_preferences()
+    interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    try:
+        interval = int(interval_str)
+    except ValueError:
+        interval = 600  # Default to 10 minutes if invalid
+
     sync_status_ref = {
         'last_sync': None,
         'is_syncing': False,
         'error': None,
+        'next_sync': datetime.now() + timedelta(seconds=5),  # First sync after 5 seconds
     }
     sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
     sync_thread.start()
@@ -1158,10 +1169,21 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     limits_thread.start()
 
     # Start background Gist sync thread for automatic synchronization
+    # Calculate next sync time based on interval setting
+    from src.storage.snapshot_db import load_user_preferences
+    from src.config.defaults import DEFAULT_PREFERENCES
+    prefs = load_user_preferences()
+    interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    try:
+        interval = int(interval_str)
+    except ValueError:
+        interval = 600  # Default to 10 minutes if invalid
+
     sync_status_ref = {
         'last_sync': None,
         'is_syncing': False,
         'error': None,
+        'next_sync': datetime.now() + timedelta(seconds=5),  # First sync after 5 seconds
     }
     sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
     sync_thread.start()
