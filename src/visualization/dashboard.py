@@ -4015,7 +4015,11 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                 footer.append("Syncing... ", style="bold yellow")
                 footer.append("◼", style="bold yellow blink")
             elif sync_status.get('error'):
-                footer.append("✗ Error ", style="bold red")
+                error_msg = sync_status['error']
+                # Truncate long error messages
+                if len(error_msg) > 50:
+                    error_msg = error_msg[:47] + "..."
+                footer.append(f"✗ Error: {error_msg}", style="bold red")
             elif sync_status.get('last_sync'):
                 last_sync = sync_status['last_sync']
                 now = datetime.now()
