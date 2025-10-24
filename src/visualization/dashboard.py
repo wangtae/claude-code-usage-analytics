@@ -3593,7 +3593,6 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("\n")
         elif view_mode == "heatmap":
             # Navigation and quit instructions for heatmap mode
-            from datetime import datetime
             time_offset = view_mode_ref.get('offset', 0) if view_mode_ref else 0
             current_year = datetime.now().year + time_offset
 
