@@ -820,6 +820,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             session_cost = _calculate_session_cost(records, limits.get('session_reset'))
             weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
             weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            today_cost = _calculate_today_cost(records)
 
             # Calculate recommended usage percentages
             from datetime import datetime, timezone as dt_timezone
@@ -855,7 +856,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             # M1 mode: compact style with bar+percentage combined, no border
             if is_m1_mode:
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 # Check if recommended usage indicator should be shown for session
                 if session_recommended_pct > 0:
@@ -920,7 +921,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m2_mode:
                 # M2 mode: M1 style (no border) with M4 bars (percentage separated)
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended_separate(
@@ -993,7 +994,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m3_mode:
                 # M3 mode: dashboard style with bar+percentage combined (like M1) and panel wrapper
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended(
@@ -1062,7 +1063,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m4_mode:
                 # M4 mode: dashboard style with percentage separated and panel wrapper
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended_separate(
@@ -1646,6 +1647,49 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     return weekly_cost
 
 
+def _calculate_today_cost(records: list[UsageRecord]) -> float:
+    """
+    Calculate cost for today (since midnight in local timezone).
+
+    Args:
+        records: List of usage records
+
+    Returns:
+        Total cost for today
+    """
+    from src.models.pricing import calculate_cost
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from src.utils.timezone import get_user_timezone
+
+    # Get today's start (midnight in local timezone)
+    tz_name = get_user_timezone()
+    try:
+        local_tz = ZoneInfo(tz_name)
+    except Exception:
+        local_tz = timezone.utc
+
+    now = datetime.now(local_tz)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Convert to UTC for comparison with records
+    today_start_utc = today_start.astimezone(timezone.utc)
+
+    today_cost = 0.0
+    for record in records:
+        if record.timestamp >= today_start_utc and record.model and record.token_usage and record.model != "<synthetic>":
+            cost = calculate_cost(
+                record.token_usage.input_tokens,
+                record.token_usage.output_tokens,
+                record.model,
+                record.token_usage.cache_creation_tokens,
+                record.token_usage.cache_read_tokens,
+            )
+            today_cost += cost
+
+    return today_cost
+
+
 def _calculate_totals_for_month(summary: UsageSummary, year: int, month: int) -> DailyTotal | None:
     """Aggregate totals from UsageSummary for a specific month."""
     from datetime import datetime
@@ -1854,6 +1898,7 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             session_cost = _calculate_session_cost(records, limits.get('session_reset'))
             weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
             weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            today_cost = _calculate_today_cost(records)
 
             # Get color mode and colors from view_mode_ref
             from src.config.defaults import DEFAULT_COLORS
@@ -1894,7 +1939,7 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             limits_table.add_column("Content", justify="left")
 
             # Session limit (3 rows)
-            limits_table.add_row("Current session")
+            limits_table.add_row(f"Current session (Today {format_cost(today_cost)})")
 
             if session_recommended_pct > 0:
                 session_bar = _create_usage_bar_with_recommended(
