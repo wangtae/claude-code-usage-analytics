@@ -1293,13 +1293,17 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             project_breakdown = _create_project_breakdown(records)
             sections_to_render.append(("project", project_breakdown))
 
-            # Check weekly display mode (limits or calendar)
+            # Check weekly display mode (limits, calendar, or recent7)
             weekly_display_mode = view_mode_ref.get('weekly_display_mode', 'limits') if view_mode_ref else 'limits'
 
             if weekly_display_mode == 'calendar':
                 # Show calendar week (Mon-Sun, current ISO week)
                 daily_breakdown_calendar = _create_daily_breakdown_calendar_week(records)
                 sections_to_render.append(("daily_calendar", daily_breakdown_calendar))
+            elif weekly_display_mode == 'recent7':
+                # Show recent 7 days (rolling window)
+                daily_breakdown_recent7 = _create_daily_breakdown_recent7(records)
+                sections_to_render.append(("daily_recent7", daily_breakdown_recent7))
             else:
                 # Show Usage Limits week (default)
                 # Get week range from view_mode_ref if available
@@ -2557,6 +2561,135 @@ def _create_daily_breakdown_calendar_week(records: list[UsageRecord]) -> Panel:
     return Panel(
         table,
         title="[bold]Daily Usage (Calendar Week)",
+        subtitle=subtitle_text,
+        border_style="white",
+        expand=True,
+    )
+
+
+def _create_daily_breakdown_recent7(records: list[UsageRecord]) -> Panel:
+    """
+    Create daily usage breakdown for recent 7 days (today and last 6 days).
+    Shows rolling 7-day window ending today.
+
+    Args:
+        records: List of usage records
+
+    Returns:
+        Panel with daily breakdown in graph format
+    """
+    from src.models.pricing import calculate_cost, format_cost
+    from datetime import timedelta
+
+    # Get today's date and calculate 7 days ago
+    now = datetime.now().astimezone()
+    today = now.date()
+    seven_days_ago = today - timedelta(days=6)  # Today + 6 days ago = 7 days
+
+    # Aggregate by date (format: "YYYY-MM-DD")
+    daily_data: dict[str, dict] = defaultdict(lambda: {
+        "total_tokens": 0,
+        "cost": 0.0
+    })
+
+    for record in records:
+        if record.token_usage and record.timestamp:
+            timestamp = record.timestamp
+            if timestamp.tzinfo:
+                local_ts = timestamp.astimezone()
+            else:
+                local_ts = timestamp
+
+            date = local_ts.strftime("%Y-%m-%d")
+            record_date = local_ts.date()
+
+            # Only include records within recent 7 days
+            if seven_days_ago <= record_date <= today:
+                daily_data[date]["total_tokens"] += (
+                    record.token_usage.input_tokens + record.token_usage.output_tokens
+                )
+
+                if record.model and record.model != "<synthetic>":
+                    cost = calculate_cost(
+                        record.token_usage.input_tokens,
+                        record.token_usage.output_tokens,
+                        record.model,
+                        record.token_usage.cache_creation_tokens,
+                        record.token_usage.cache_read_tokens,
+                    )
+                    daily_data[date]["cost"] += cost
+
+    # Generate all dates in the recent 7 days
+    all_dates = []
+    current_date = seven_days_ago
+    while current_date <= today:
+        date_str = current_date.strftime("%Y-%m-%d")
+        if date_str in daily_data:
+            all_dates.append((date_str, daily_data[date_str]))
+        else:
+            # Day with no data
+            all_dates.append((date_str, {
+                "total_tokens": 0,
+                "cost": 0.0
+            }))
+        current_date += timedelta(days=1)
+
+    # Calculate totals and max for scaling
+    total_tokens = sum(data["total_tokens"] for _, data in all_dates)
+    max_tokens = max((data["total_tokens"] for _, data in all_dates), default=0)
+
+    # Sort by date in ascending order (oldest first)
+    sorted_dates = sorted(all_dates, reverse=False)
+
+    # Create table with bars
+    table = Table(show_header=True, box=None, padding=(0, 2))
+    table.add_column("Date", style="white", justify="left", width=30)
+    table.add_column("", justify="left", width=20)  # Bar column
+    table.add_column("Tokens", style=ORANGE, justify="right", width=12)
+    table.add_column("%", style=CYAN, justify="right", width=8)
+    table.add_column("Cost", style="green", justify="right", width=10)
+
+    for idx, (date, data) in enumerate(sorted_dates, start=1):
+        tokens = data["total_tokens"]
+        percentage = (tokens / total_tokens * 100) if total_tokens > 0 else 0
+
+        # Parse date and get day of week
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        day_name = date_obj.strftime("%a")  # Mon, Tue, Wed, etc.
+
+        # Format: [1] 2025-10-15, Mon
+        date_with_shortcut = f"[yellow][{idx}][/yellow] {date}, {day_name}"
+
+        # If no data for this day, show "-" for tokens/cost and empty bar
+        if tokens == 0:
+            bar = Text("▬" * 20, style=DIM)
+            tokens_display = "[dim]-[/dim]"
+            percentage_display = "[dim]-[/dim]"
+            cost_display = "[dim]-[/dim]"
+        else:
+            bar = _create_bar(tokens, max_tokens, width=20)
+            tokens_display = _format_number(tokens)
+            percentage_display = f"[cyan]{percentage:.1f}%[/cyan]"
+            cost_display = format_cost(data["cost"])
+
+        table.add_row(
+            date_with_shortcut,
+            bar,
+            tokens_display,
+            percentage_display,
+            cost_display,
+        )
+
+    # Create dynamic subtitle based on actual number of dates
+    num_dates = len(sorted_dates)
+    if num_dates > 0:
+        subtitle_text = f"[dim]Press number keys (1-{num_dates}) to view detailed hourly breakdown[/dim]"
+    else:
+        subtitle_text = None
+
+    return Panel(
+        table,
+        title="[bold]Daily Usage (Recent 7 Days)",
         subtitle=subtitle_text,
         border_style="white",
         expand=True,
@@ -3939,6 +4072,9 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                 if weekly_display_mode == 'calendar':
                     # Calendar mode - use yellow (standard selection color)
                     footer.append("[w]eekly", style=f"black on {YELLOW}")
+                elif weekly_display_mode == 'recent7':
+                    # Recent 7 days mode - use purple/magenta
+                    footer.append("[w]eekly", style="black on magenta")
                 else:
                     # Limit Period mode - use bright red (same as Usage Limits bar color)
                     footer.append("[w]eekly", style="black on bright_red")
@@ -4068,7 +4204,12 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                     # Show current mode name
                     if view_mode == "weekly":
                         current_mode = view_mode_ref.get('weekly_display_mode', 'limits')
-                        mode_name = "Weekly Limit Period" if current_mode == "limits" else "Calendar Week"
+                        if current_mode == "limits":
+                            mode_name = "Weekly Limit Period"
+                        elif current_mode == "calendar":
+                            mode_name = "Calendar Week"
+                        else:  # recent7
+                            mode_name = "Recent 7 Days"
                     elif view_mode == "monthly":
                         current_mode = view_mode_ref.get('monthly_display_mode', 'daily')
                         mode_name = "Daily" if current_mode == "daily" else "Weekly"

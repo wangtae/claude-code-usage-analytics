@@ -22,6 +22,7 @@ from src.storage.snapshot_db import (
     load_usage_summary,
     load_recent_usage_records,
     load_all_devices_historical_records_cached,
+    load_last_n_days_records,
     save_limits_snapshot,
     save_snapshot,
 )
@@ -643,9 +644,14 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                         save_user_preference('usage_display_mode', str(new_display))
                         save_user_preference('color_mode', 'solid')
                     elif view_mode_ref['mode'] == VIEW_MODE_WEEKLY:
-                        # Toggle between limits and calendar week
+                        # Cycle through: limits -> calendar -> recent7 -> limits
                         current = view_mode_ref.get('weekly_display_mode', 'limits')
-                        view_mode_ref['weekly_display_mode'] = 'calendar' if current == 'limits' else 'limits'
+                        if current == 'limits':
+                            view_mode_ref['weekly_display_mode'] = 'calendar'
+                        elif current == 'calendar':
+                            view_mode_ref['weekly_display_mode'] = 'recent7'
+                        else:  # recent7
+                            view_mode_ref['weekly_display_mode'] = 'limits'
                         view_mode_ref['changed'] = True
                     elif view_mode_ref['mode'] == VIEW_MODE_MONTHLY:
                         # Toggle between daily and weekly breakdown
@@ -1419,8 +1425,15 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
     all_records = []
     limits_from_db = None
 
+    # Determine weekly display mode early for record loading decision
+    weekly_display_mode = view_mode_ref.get('weekly_display_mode', 'limits') if view_mode_ref else 'limits'
+
     def _load_records_for_view() -> list:
-        if view_mode in {VIEW_MODE_WEEKLY, VIEW_MODE_MONTHLY, VIEW_MODE_YEARLY, VIEW_MODE_HEATMAP}:
+        # For recent7 mode, load exactly last 7 days
+        # For other weekly modes, use historical records
+        if view_mode == VIEW_MODE_WEEKLY and weekly_display_mode == 'recent7':
+            return load_last_n_days_records(days=7)
+        elif view_mode in {VIEW_MODE_WEEKLY, VIEW_MODE_MONTHLY, VIEW_MODE_YEARLY, VIEW_MODE_HEATMAP}:
             return load_all_devices_historical_records_cached()
         return load_recent_usage_records()
 
@@ -1455,7 +1468,10 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
 
     # Apply view mode filter
     display_records = list(all_records)
-    if view_mode == VIEW_MODE_WEEKLY:
+
+    # weekly_display_mode is already defined earlier for record loading
+    # Check if in recent7 mode - skip weekly filtering for recent7 as it filters internally
+    if view_mode == VIEW_MODE_WEEKLY and weekly_display_mode != 'recent7':
         # Try to get week reset from DB or from stored pattern
         week_reset_str = None
         preset_reset_time = None
