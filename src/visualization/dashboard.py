@@ -15,6 +15,7 @@ from src.aggregation.daily_stats import AggregatedStats
 from src.aggregation.summary import DailyTotal, UsageSummary
 from src.models.usage_record import UsageRecord
 from src.storage.snapshot_db import get_limits_data
+from src.config.reset_times import get_week_start_datetime
 #endregion
 
 
@@ -1395,22 +1396,41 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
     not just sonnet. The name is kept for backward compatibility.
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
         week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)" or "10/31 9:59am")
-                       If None, falls back to last 7 days
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
         Total cost for weekly period (all models)
+
+    Note: If using stored reset time, this function loads all recent records (30 days)
+    to ensure accurate cost calculation across the full weekly period, even if the
+    provided records list is filtered to a different time range.
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
     from zoneinfo import ZoneInfo
     import re
 
-    # Parse week start time (reset - 7 days)
+    # Try to use stored reset time first
     week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("week_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
 
-    if week_reset_str:
+            # Load full recent records (30 days) to ensure we have all data
+            # The provided records might be filtered by view mode (e.g., weekly view)
+            from src.storage.snapshot_db import load_recent_usage_records
+            records = load_recent_usage_records(include_previous_days=30)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse week_reset_str
+    if week_start is None and week_reset_str:
         try:
             # Extract timezone
             tz_match = re.search(r'\((.*?)\)', week_reset_str)
@@ -1523,22 +1543,41 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     Calculate cost for current Opus week period (since opus reset, opus models only).
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
         opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
-                       If None, falls back to last 7 days
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
         Total cost for opus weekly period
+
+    Note: If using stored reset time, this function loads all recent records (30 days)
+    to ensure accurate cost calculation across the full weekly period, even if the
+    provided records list is filtered to a different time range.
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
     from zoneinfo import ZoneInfo
     import re
 
-    # Parse opus week start time (reset - 7 days)
+    # Try to use stored reset time first
     week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("opus_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
 
-    if opus_reset_str:
+            # Load full recent records (30 days) to ensure we have all data
+            # The provided records might be filtered by view mode (e.g., weekly view)
+            from src.storage.snapshot_db import load_recent_usage_records
+            records = load_recent_usage_records(include_previous_days=30)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse opus_reset_str
+    if week_start is None and opus_reset_str:
         try:
             # Extract timezone
             tz_match = re.search(r'\((.*?)\)', opus_reset_str)
