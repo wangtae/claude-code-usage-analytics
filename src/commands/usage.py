@@ -1462,19 +1462,27 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
         if limits_from_db and limits_from_db.get("week_reset"):
             week_reset_str = limits_from_db["week_reset"]
         else:
-            # No limits data available - try to use stored pattern
-            from src.storage.snapshot_db import load_user_preferences
-            prefs = load_user_preferences()
-            week_reset_pattern = prefs.get('week_reset_pattern')
+            # Try stored reset time from reset_times.json first
+            from src.config.reset_times import format_reset_for_display, get_reset_datetime
 
-            if week_reset_pattern:
-                # Calculate next reset from stored pattern
-                reset_result = _calculate_next_reset_from_pattern(week_reset_pattern)
-                if reset_result:
-                    # Use the pattern string for parsing
-                    week_reset_str = week_reset_pattern
-                    # Extract preset values from calculation
-                    _, preset_reset_time, preset_reset_day = reset_result
+            week_reset_dt = get_reset_datetime("week_reset")
+            if week_reset_dt:
+                # Use stored reset time
+                week_reset_str = format_reset_for_display("week_reset")
+            else:
+                # Fallback: Try to use stored pattern
+                from src.storage.snapshot_db import load_user_preferences
+                prefs = load_user_preferences()
+                week_reset_pattern = prefs.get('week_reset_pattern')
+
+                if week_reset_pattern:
+                    # Calculate next reset from stored pattern
+                    reset_result = _calculate_next_reset_from_pattern(week_reset_pattern)
+                    if reset_result:
+                        # Use the pattern string for parsing
+                        week_reset_str = week_reset_pattern
+                        # Extract preset values from calculation
+                        _, preset_reset_time, preset_reset_day = reset_result
 
         if week_reset_str:
             # Parse week reset date and filter records for weekly mode only
