@@ -298,13 +298,27 @@ def get_reset_datetime(reset_type: str) -> Optional[datetime]:
 
 def get_week_start_datetime(reset_type: str) -> Optional[datetime]:
     """
-    Get the start of the current week period (reset_datetime - 7 days).
+    Get the start of the current week period.
+
+    The stored reset_dt is always the NEXT reset time (future).
+    To find when the current week started, we need to go back 7 days from the next reset.
 
     Args:
         reset_type: One of "week_reset", "opus_reset"
 
     Returns:
         Timezone-aware datetime object for week start, or None if not available
+
+    Example:
+        Stored reset: Nov 3, 1pm (next reset)
+        Current time: Oct 27, 2pm
+        Week start: Nov 3, 1pm - 7 days = Oct 27, 1pm
+
+        BUT if current time (Oct 27, 2pm) is AFTER calculated week_start (Oct 27, 1pm),
+        that means the reset already happened and we're in the current week.
+
+        If current time (Oct 27, 2pm) is BEFORE calculated week_start (Oct 27, 3pm),
+        that means we're still in the previous week, so go back another 7 days.
     """
     from datetime import timedelta
 
@@ -312,15 +326,23 @@ def get_week_start_datetime(reset_type: str) -> Optional[datetime]:
     if not reset_dt:
         return None
 
-    # Check if reset is in the past
     now = datetime.now(reset_dt.tzinfo)
-    if reset_dt < now:
-        # Reset already happened, week started 7 days before reset
-        return reset_dt - timedelta(days=7)
-    else:
-        # Reset is in the future, we're still in the current week
-        # Week started 7 days before reset
-        return reset_dt - timedelta(days=7)
+
+    # Calculate potential week_start (7 days before next reset)
+    week_start = reset_dt - timedelta(days=7)
+
+    # If we're before the calculated week_start, we're still in the previous week
+    # Go back another 7 days
+    while now < week_start:
+        week_start = week_start - timedelta(days=7)
+
+    # If we're past the next reset, we need to move forward
+    next_reset = week_start + timedelta(days=7)
+    while now >= next_reset:
+        week_start = next_reset
+        next_reset = week_start + timedelta(days=7)
+
+    return week_start
 
 
 def format_reset_for_display(reset_type: str) -> str:
