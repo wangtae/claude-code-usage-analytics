@@ -15,6 +15,7 @@ from src.aggregation.daily_stats import AggregatedStats
 from src.aggregation.summary import DailyTotal, UsageSummary
 from src.models.usage_record import UsageRecord
 from src.storage.snapshot_db import get_limits_data
+from src.config.reset_times import get_week_start_datetime
 #endregion
 
 
@@ -156,43 +157,70 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
 
 def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> float:
     """
-    Calculate recommended usage percentage by distributing 100% evenly across the entire 7-day period.
+    Calculate recommended usage percentage based on elapsed time + 24 hours.
 
-    Goal: Distribute quota uniformly over the week period (from week start to reset).
-    This provides accurate recommended usage that increases proportionally with elapsed time,
-    matching the actual weekly usage pattern.
+    Goal: Provide a buffer by calculating recommended usage as if we're 24 hours ahead.
+    At reset time, recommended usage is 14.3% (24h / 7days).
+    At exactly 6 days elapsed, recommended usage reaches 100%.
 
-    Uses minute-based calculation for maximum accuracy, since week resets can occur
-    at any time (e.g., Friday 9:59am).
+    Uses minute-based calculation for maximum accuracy.
 
     Args:
         week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)")
         weekly_days: Unused parameter (kept for compatibility with settings)
-                     Calculation always uses full 7-day period regardless of this value
 
     Returns:
-        Recommended usage percentage (0-100) based on elapsed time
-        - Increases proportionally as time progresses through the week
-        - 1 day elapsed = 14.3% recommended (1/7 of week)
-        - 6 days elapsed = 85.7% recommended (6/7 of week)
+        Recommended usage percentage (0-100) based on (elapsed time + 24 hours)
+        - At reset time (0h elapsed): 14.3% recommended (24h / 7days)
+        - At 1 day elapsed: 28.6% recommended (48h / 7days)
+        - At 6 days elapsed: 100% recommended (168h / 7days)
 
     Example:
         Week start: Oct 24, 9:59am (Friday)
         Reset: Oct 31, 9:59am (Friday, 7 days later)
-        Current: Oct 25, 4:45pm (Saturday, ~31 hours elapsed)
+        Current: Oct 24, 9:59am (Friday, 0 minutes elapsed)
 
         Total period: 7 days = 10,080 minutes
-        Elapsed: ~1.29 days = ~1,857 minutes
-        Recommended: (1,857 / 10,080) × 100 ≈ 18.4%
-
-        This means at this point in the week, you should have used about 18.4% of your quota
-        to maintain even distribution throughout the week.
+        Elapsed: 0 minutes
+        Buffered time: 0 + 1,440 (24h) = 1,440 minutes
+        Recommended: (1,440 / 10,080) × 100 ≈ 14.3%
     """
     from datetime import datetime, timezone as dt_timezone, timedelta
     from zoneinfo import ZoneInfo
+    from src.config.reset_times import get_week_start_datetime
     import re
 
     try:
+        # Try to use stored reset time information first for accurate week_start
+        stored_week_start = get_week_start_datetime("week_reset")
+        if stored_week_start:
+            now = datetime.now(stored_week_start.tzinfo)
+
+            # Calculate next reset (7 days after stored week_start)
+            next_reset = stored_week_start + timedelta(days=7)
+
+            # If we're past the next reset, we need to recalculate week_start
+            if now >= next_reset:
+                # Move to next week period
+                while now >= next_reset:
+                    stored_week_start = next_reset
+                    next_reset = stored_week_start + timedelta(days=7)
+
+            week_start = stored_week_start
+            reset_dt = next_reset
+
+            # Calculate elapsed time + 24 hours buffer
+            total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+            elapsed = now - week_start
+            elapsed_minutes = elapsed.total_seconds() / 60
+            
+            # Add 24-hour buffer (1,440 minutes)
+            buffered_minutes = elapsed_minutes + (24 * 60)
+            recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
+            return min(100, recommended_pct)
+
+        # Fallback to parsing reset_str if no stored data available
         # Extract timezone
         tz_match = re.search(r'\((.*?)\)', week_reset_str)
         tz_name = tz_match.group(1) if tz_match else 'UTC'
@@ -227,13 +255,10 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
             now = datetime.now(tz)
             reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-            # If reset is in the past today, find the next occurrence
-            # Weekly resets happen within the next 7 days (shown without date in Claude)
-            while reset_dt < now:
-                reset_dt = reset_dt + timedelta(days=1)
-                # Stop if we've gone more than 7 days (safety check)
-                if (reset_dt - now).days > 7:
-                    break
+            # If reset is in the past today, add 7 days to find next weekly reset
+            # Weekly resets happen exactly every 7 days
+            if reset_dt < now:
+                reset_dt = reset_dt + timedelta(days=7)
         else:
             # Parse full date format
             month_name = date_match.group(1)
@@ -287,10 +312,11 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
         elapsed = now - week_start
         elapsed_minutes = elapsed.total_seconds() / 60
 
-        # Calculate recommended percentage based on elapsed time
-        # This distributes 100% evenly across the entire 7-day period
-        # Each minute that passes increases the recommended usage by ~0.0099%
-        recommended_pct = (elapsed_minutes / total_period_minutes) * 100
+        # Add 24-hour buffer (1,440 minutes)
+        # This ensures recommended usage at reset time is 14.3% (1/7)
+        # and reaches 100% at exactly 6 days elapsed
+        buffered_minutes = elapsed_minutes + (24 * 60)
+        recommended_pct = (buffered_minutes / total_period_minutes) * 100
 
         return min(100, recommended_pct)
 
@@ -300,46 +326,69 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
 
 def _calculate_distributed_recommended_pct(reset_str: str) -> float:
     """
-    Calculate recommended usage by distributing 100% evenly across remaining time until reset.
+    Calculate recommended usage percentage based on elapsed time + 24 hours.
 
-    This function distributes the quota uniformly over the remaining time period,
-    updating every minute. As time passes, the recommended percentage increases,
-    causing the exceeded (red) portion to gradually decrease.
+    Goal: Provide a buffer by calculating recommended usage as if we're 24 hours ahead.
+    At reset time, recommended usage is 14.3% (24h / 7days).
+    At exactly 6 days elapsed, recommended usage reaches 100%.
 
-    Strategy:
-    - Total period: 7 days (from week_start to reset)
-    - Distribute 100% evenly across all remaining minutes
-    - Each minute increases recommended usage proportionally
-    - Exceeded usage (red bar) shrinks as time progresses
+    Uses minute-based calculation for maximum accuracy.
 
     Args:
         reset_str: Reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)")
 
     Returns:
-        Recommended usage percentage (0-100) for current time
+        Recommended usage percentage (0-100) based on (elapsed time + 24 hours)
+        - At reset time (0h elapsed): 14.3% recommended (24h / 7days)
+        - At 1 day elapsed: 28.6% recommended (48h / 7days)
+        - At 6 days elapsed: 100% recommended (168h / 7days)
 
     Example:
         Reset: Oct 27, 9:59am
         Week start: Oct 24, 9:59am (reset - 7 days)
-        Now: Oct 24, 10:48am (49 minutes elapsed)
+        Now: Oct 24, 9:59am (0 minutes elapsed)
 
         Total period: 7 days = 10,080 minutes
-        Elapsed: 49 minutes
-        Recommended: (49 / 10,080) × 100 = 0.49%
-
-        If actual usage is 100%, then:
-        - Blue bar: 0.49% (recommended portion used)
-        - Red bar: 99.51% (exceeded portion)
-
-        After 1 minute (10:49am):
-        - Recommended: (50 / 10,080) × 100 = 0.50%
-        - Red bar shrinks to 99.50%
+        Elapsed: 0 minutes
+        Buffered time: 0 + 1,440 (24h) = 1,440 minutes
+        Recommended: (1,440 / 10,080) × 100 ≈ 14.3%
     """
     from datetime import datetime, timezone as dt_timezone, timedelta
     from zoneinfo import ZoneInfo
+    from src.config.reset_times import get_week_start_datetime
     import re
 
     try:
+        # Try to use stored reset time information first for accurate week_start
+        stored_week_start = get_week_start_datetime("opus_reset")
+        if stored_week_start:
+            now = datetime.now(stored_week_start.tzinfo)
+
+            # Calculate next reset (7 days after stored week_start)
+            next_reset = stored_week_start + timedelta(days=7)
+
+            # If we're past the next reset, we need to recalculate week_start
+            if now >= next_reset:
+                # Move to next week period
+                while now >= next_reset:
+                    stored_week_start = next_reset
+                    next_reset = stored_week_start + timedelta(days=7)
+
+            week_start = stored_week_start
+            reset_dt = next_reset
+
+            # Calculate elapsed time + 24 hours buffer
+            total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+            elapsed = now - week_start
+            elapsed_minutes = elapsed.total_seconds() / 60
+            
+            # Add 24-hour buffer (1,440 minutes)
+            buffered_minutes = elapsed_minutes + (24 * 60)
+            recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
+            return min(100, recommended_pct)
+
+        # Fallback to parsing reset_str if no stored data available
         # Extract timezone
         tz_match = re.search(r'\((.*?)\)', reset_str)
         tz_name = tz_match.group(1) if tz_match else 'UTC'
@@ -374,13 +423,10 @@ def _calculate_distributed_recommended_pct(reset_str: str) -> float:
             now = datetime.now(tz)
             reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-            # If reset is in the past today, find the next occurrence
-            # Weekly resets happen within the next 7 days (shown without date in Claude)
-            while reset_dt < now:
-                reset_dt = reset_dt + timedelta(days=1)
-                # Stop if we've gone more than 7 days (safety check)
-                if (reset_dt - now).days > 7:
-                    break
+            # If reset is in the past today, add 7 days to find next weekly reset
+            # Weekly resets happen exactly every 7 days
+            if reset_dt < now:
+                reset_dt = reset_dt + timedelta(days=7)
         else:
             # Parse full date format
             month_name = date_match.group(1)
@@ -433,9 +479,11 @@ def _calculate_distributed_recommended_pct(reset_str: str) -> float:
         elapsed = now - week_start
         elapsed_minutes = elapsed.total_seconds() / 60
 
-        # Calculate recommended percentage based on elapsed time
-        # This distributes 100% evenly across the entire 7-day period
-        recommended_pct = (elapsed_minutes / total_period_minutes) * 100
+        # Add 24-hour buffer (1,440 minutes)
+        # This ensures recommended usage at reset time is 14.3% (1/7)
+        # and reaches 100% at exactly 6 days elapsed
+        buffered_minutes = elapsed_minutes + (24 * 60)
+        recommended_pct = (buffered_minutes / total_period_minutes) * 100
 
         return min(100, recommended_pct)
 
@@ -1395,22 +1443,41 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
     not just sonnet. The name is kept for backward compatibility.
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
         week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)" or "10/31 9:59am")
-                       If None, falls back to last 7 days
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
         Total cost for weekly period (all models)
+
+    Note: If using stored reset time, this function loads all recent records (30 days)
+    to ensure accurate cost calculation across the full weekly period, even if the
+    provided records list is filtered to a different time range.
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
     from zoneinfo import ZoneInfo
     import re
 
-    # Parse week start time (reset - 7 days)
+    # Try to use stored reset time first
     week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("week_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
 
-    if week_reset_str:
+            # Load full recent records (30 days) to ensure we have all data
+            # The provided records might be filtered by view mode (e.g., weekly view)
+            from src.storage.snapshot_db import load_recent_usage_records
+            records = load_recent_usage_records(include_previous_days=30)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse week_reset_str
+    if week_start is None and week_reset_str:
         try:
             # Extract timezone
             tz_match = re.search(r'\((.*?)\)', week_reset_str)
@@ -1523,22 +1590,41 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     Calculate cost for current Opus week period (since opus reset, opus models only).
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
         opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
-                       If None, falls back to last 7 days
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
         Total cost for opus weekly period
+
+    Note: If using stored reset time, this function loads all recent records (30 days)
+    to ensure accurate cost calculation across the full weekly period, even if the
+    provided records list is filtered to a different time range.
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
     from zoneinfo import ZoneInfo
     import re
 
-    # Parse opus week start time (reset - 7 days)
+    # Try to use stored reset time first
     week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("opus_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
 
-    if opus_reset_str:
+            # Load full recent records (30 days) to ensure we have all data
+            # The provided records might be filtered by view mode (e.g., weekly view)
+            from src.storage.snapshot_db import load_recent_usage_records
+            records = load_recent_usage_records(include_previous_days=30)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse opus_reset_str
+    if week_start is None and opus_reset_str:
         try:
             # Extract timezone
             tz_match = re.search(r'\((.*?)\)', opus_reset_str)
