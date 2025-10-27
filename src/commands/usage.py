@@ -229,13 +229,15 @@ def _parse_week_reset_date(week_reset_str: str) -> datetime | None:
         except Exception:
             tz = dt_timezone.utc
 
-        # Try to parse "Oct 17, 10am" format (with date)
-        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+)(am|pm)', reset_no_tz)
+        # Try to parse "Oct 17, 10am" or "Oct 31, 9:59am" format (with date)
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
         if date_match:
             month_name = date_match.group(1)
             day = int(date_match.group(2))
             hour = int(date_match.group(3))
-            meridiem = date_match.group(4)
+            minute_str = date_match.group(4)
+            minute = int(minute_str) if minute_str else 0
+            meridiem = date_match.group(5)
 
             # Convert to 24-hour format
             if meridiem == 'pm' and hour != 12:
@@ -250,7 +252,7 @@ def _parse_week_reset_date(week_reset_str: str) -> datetime | None:
             month_num = datetime.strptime(month_name, '%b').month
 
             # Create timezone-aware datetime and convert to UTC
-            local_dt = datetime(year, month_num, day, hour, 0, 0, tzinfo=tz)
+            local_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
             utc_dt = local_dt.astimezone(dt_timezone.utc)
             return utc_dt.replace(tzinfo=None)
 
