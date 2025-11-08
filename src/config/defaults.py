@@ -140,6 +140,9 @@ DEFAULT_PREFERENCES = {
     "timezone": "auto",             # auto | UTC | Asia/Seoul | ...
     "exclude_haiku_messages": "1",  # 1=exclude Haiku from message output, 0=include
     "weekly_recommended_days": "7", # Days for weekly recommended usage calculation (1-7)
+    "gist_auto_sync": "1",          # 0=disabled, 1=enabled (auto-sync to GitHub Gist)
+    "gist_sync_interval": "600",    # Sync interval in seconds (default: 10 minutes)
+    "gist_sync_mode": "bidirectional",  # bidirectional | pull_only | push_only
 }
 
 #endregion

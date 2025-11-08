@@ -22,6 +22,7 @@ from src.storage.snapshot_db import (
     load_usage_summary,
     load_recent_usage_records,
     load_all_devices_historical_records_cached,
+    load_last_n_days_records,
     save_limits_snapshot,
     save_snapshot,
 )
@@ -229,13 +230,15 @@ def _parse_week_reset_date(week_reset_str: str) -> datetime | None:
         except Exception:
             tz = dt_timezone.utc
 
-        # Try to parse "Oct 17, 10am" format (with date)
-        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+)(am|pm)', reset_no_tz)
+        # Try to parse "Oct 17, 10am" or "Oct 31, 9:59am" format (with date)
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
         if date_match:
             month_name = date_match.group(1)
             day = int(date_match.group(2))
             hour = int(date_match.group(3))
-            meridiem = date_match.group(4)
+            minute_str = date_match.group(4)
+            minute = int(minute_str) if minute_str else 0
+            meridiem = date_match.group(5)
 
             # Convert to 24-hour format
             if meridiem == 'pm' and hour != 12:
@@ -250,7 +253,7 @@ def _parse_week_reset_date(week_reset_str: str) -> datetime | None:
             month_num = datetime.strptime(month_name, '%b').month
 
             # Create timezone-aware datetime and convert to UTC
-            local_dt = datetime(year, month_num, day, hour, 0, 0, tzinfo=tz)
+            local_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
             utc_dt = local_dt.astimezone(dt_timezone.utc)
             return utc_dt.replace(tzinfo=None)
 
@@ -374,6 +377,71 @@ def _limits_updater_thread(stop_event: threading.Event, interval: int = 60) -> N
                     )
             except Exception:
                 pass  # Silently ignore errors in background thread
+
+
+def _gist_sync_thread(stop_event: threading.Event, sync_status_ref: dict) -> None:
+    """
+    Background thread that syncs data with GitHub Gist at regular intervals.
+
+    Performs bidirectional sync (pull + push) based on user preferences.
+    Silent failures ensure dashboard continues running even if sync fails.
+
+    Args:
+        stop_event: Threading event to signal when to stop syncing
+        sync_status_ref: Dict to track sync status (last_sync, is_syncing, error)
+    """
+    from src.storage.snapshot_db import load_user_preferences
+    from src.sync.sync_manager import SyncManager
+    from src.sync.token_manager import TokenManager
+    from src.config.defaults import DEFAULT_PREFERENCES
+
+    # Periodic sync loop (initial sync already done synchronously at startup)
+    while not stop_event.is_set():
+        # Get current interval setting
+        prefs = load_user_preferences()
+        interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+        try:
+            interval = int(interval_str)
+        except ValueError:
+            interval = 600  # Default to 10 minutes if invalid
+
+        if stop_event.wait(interval):
+            break  # Stop event was set during wait
+
+        # Check if auto-sync is enabled
+        prefs = load_user_preferences()
+        auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+        if auto_sync != '1':
+            continue
+
+        # Check if token is configured
+        token_manager = TokenManager()
+        if not token_manager.has_token():
+            continue
+
+        try:
+            sync_status_ref['is_syncing'] = True
+            sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+
+            manager = SyncManager()
+
+            # Bidirectional: pull then push
+            if sync_mode in ['bidirectional', 'pull_only']:
+                manager.pull()
+
+            if sync_mode in ['bidirectional', 'push_only']:
+                # Use auto-merge (skip_conflict_check=False)
+                manager.push(skip_conflict_check=False)
+
+            sync_status_ref['last_sync'] = datetime.now()
+            sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+            sync_status_ref['is_syncing'] = False
+            sync_status_ref['error'] = None
+
+        except Exception as e:
+            sync_status_ref['is_syncing'] = False
+            sync_status_ref['error'] = str(e)
+            sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
 
 
 def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None:
@@ -576,9 +644,14 @@ def _keyboard_listener(view_mode_ref: dict, stop_event: threading.Event) -> None
                         save_user_preference('usage_display_mode', str(new_display))
                         save_user_preference('color_mode', 'solid')
                     elif view_mode_ref['mode'] == VIEW_MODE_WEEKLY:
-                        # Toggle between limits and calendar week
+                        # Cycle through: limits -> calendar -> recent7 -> limits
                         current = view_mode_ref.get('weekly_display_mode', 'limits')
-                        view_mode_ref['weekly_display_mode'] = 'calendar' if current == 'limits' else 'limits'
+                        if current == 'limits':
+                            view_mode_ref['weekly_display_mode'] = 'calendar'
+                        elif current == 'calendar':
+                            view_mode_ref['weekly_display_mode'] = 'recent7'
+                        else:  # recent7
+                            view_mode_ref['weekly_display_mode'] = 'limits'
                         view_mode_ref['changed'] = True
                     elif view_mode_ref['mode'] == VIEW_MODE_MONTHLY:
                         # Toggle between daily and weekly breakdown
@@ -906,6 +979,60 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
 
+    # Do initial Gist sync synchronously to ensure fresh data from other devices
+    from src.storage.snapshot_db import load_user_preferences
+    from src.config.defaults import DEFAULT_PREFERENCES
+    prefs = load_user_preferences()
+    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+    interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    try:
+        interval = int(interval_str)
+    except ValueError:
+        interval = 600  # Default to 10 minutes if invalid
+
+    sync_status_ref = {
+        'last_sync': None,
+        'is_syncing': False,
+        'error': None,
+        'next_sync': datetime.now() + timedelta(seconds=interval),
+    }
+
+    if auto_sync == '1':
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        if token_manager.has_token():
+            with console.status("[bold #ff8800]Syncing with GitHub Gist...", spinner="dots", spinner_style="#ff8800"):
+                try:
+                    from src.sync.sync_manager import SyncManager
+                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+                    manager = SyncManager()
+
+                    # Initial pull to get latest data from other devices
+                    if sync_mode in ['bidirectional', 'pull_only']:
+                        pull_stats = manager.pull()
+                        new_records = pull_stats.get('new_records', 0)
+                        console.print(f"[dim green]✓ Gist sync: {new_records} new records pulled[/dim green]")
+                    else:
+                        console.print(f"[dim green]✓ Gist sync: pull disabled (mode: {sync_mode})[/dim green]")
+
+                    sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+                    sync_status_ref['error'] = None
+                except Exception as e:
+                    console.print(f"[dim yellow]⚠ Gist sync failed: {e}[/dim yellow]")
+                    sync_status_ref['error'] = str(e)
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+
+            # Give user time to see sync message
+            time.sleep(2)
+
+    # Start background Gist sync thread for periodic automatic synchronization
+    sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
+    sync_thread.start()
+
+    # Store sync status reference for dashboard display
+    view_mode_ref['sync_status'] = sync_status_ref
+
     # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits=False, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)
 
@@ -1041,6 +1168,60 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
     # Start background limits updater thread for periodic updates
     limits_thread = threading.Thread(target=_limits_updater_thread, args=(stop_event, limits_interval), daemon=True)
     limits_thread.start()
+
+    # Do initial Gist sync synchronously to ensure fresh data from other devices
+    from src.storage.snapshot_db import load_user_preferences
+    from src.config.defaults import DEFAULT_PREFERENCES
+    prefs = load_user_preferences()
+    auto_sync = prefs.get('gist_auto_sync', DEFAULT_PREFERENCES['gist_auto_sync'])
+    interval_str = prefs.get('gist_sync_interval', DEFAULT_PREFERENCES['gist_sync_interval'])
+    try:
+        interval = int(interval_str)
+    except ValueError:
+        interval = 600  # Default to 10 minutes if invalid
+
+    sync_status_ref = {
+        'last_sync': None,
+        'is_syncing': False,
+        'error': None,
+        'next_sync': datetime.now() + timedelta(seconds=interval),
+    }
+
+    if auto_sync == '1':
+        from src.sync.token_manager import TokenManager
+        token_manager = TokenManager()
+        if token_manager.has_token():
+            with console.status("[bold #ff8800]Syncing with GitHub Gist...", spinner="dots", spinner_style="#ff8800"):
+                try:
+                    from src.sync.sync_manager import SyncManager
+                    sync_mode = prefs.get('gist_sync_mode', DEFAULT_PREFERENCES['gist_sync_mode'])
+                    manager = SyncManager()
+
+                    # Initial pull to get latest data from other devices
+                    if sync_mode in ['bidirectional', 'pull_only']:
+                        pull_stats = manager.pull()
+                        new_records = pull_stats.get('new_records', 0)
+                        console.print(f"[dim green]✓ Gist sync: {new_records} new records pulled[/dim green]")
+                    else:
+                        console.print(f"[dim green]✓ Gist sync: pull disabled (mode: {sync_mode})[/dim green]")
+
+                    sync_status_ref['last_sync'] = datetime.now()
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+                    sync_status_ref['error'] = None
+                except Exception as e:
+                    console.print(f"[dim yellow]⚠ Gist sync failed: {e}[/dim yellow]")
+                    sync_status_ref['error'] = str(e)
+                    sync_status_ref['next_sync'] = datetime.now() + timedelta(seconds=interval)
+
+            # Give user time to see sync message
+            time.sleep(2)
+
+    # Start background Gist sync thread for periodic automatic synchronization
+    sync_thread = threading.Thread(target=_gist_sync_thread, args=(stop_event, sync_status_ref), daemon=True)
+    sync_thread.start()
+
+    # Store sync status reference for dashboard display
+    view_mode_ref['sync_status'] = sync_status_ref
 
     # Display initial dashboard with fresh limits data
     _display_dashboard(jsonl_files, console, skip_limits, skip_limits_update=True, anonymize=anonymize, view_mode=view_mode_ref['mode'], view_mode_ref=view_mode_ref)
@@ -1244,8 +1425,15 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
     all_records = []
     limits_from_db = None
 
+    # Determine weekly display mode early for record loading decision
+    weekly_display_mode = view_mode_ref.get('weekly_display_mode', 'limits') if view_mode_ref else 'limits'
+
     def _load_records_for_view() -> list:
-        if view_mode in {VIEW_MODE_WEEKLY, VIEW_MODE_MONTHLY, VIEW_MODE_YEARLY, VIEW_MODE_HEATMAP}:
+        # For recent7 mode, load exactly last 7 days
+        # For other weekly modes, use historical records
+        if view_mode == VIEW_MODE_WEEKLY and weekly_display_mode == 'recent7':
+            return load_last_n_days_records(days=7)
+        elif view_mode in {VIEW_MODE_WEEKLY, VIEW_MODE_MONTHLY, VIEW_MODE_YEARLY, VIEW_MODE_HEATMAP}:
             return load_all_devices_historical_records_cached()
         return load_recent_usage_records()
 
@@ -1280,7 +1468,10 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
 
     # Apply view mode filter
     display_records = list(all_records)
-    if view_mode == VIEW_MODE_WEEKLY:
+
+    # weekly_display_mode is already defined earlier for record loading
+    # Check if in recent7 mode - skip weekly filtering for recent7 as it filters internally
+    if view_mode == VIEW_MODE_WEEKLY and weekly_display_mode != 'recent7':
         # Try to get week reset from DB or from stored pattern
         week_reset_str = None
         preset_reset_time = None
@@ -1289,19 +1480,27 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
         if limits_from_db and limits_from_db.get("week_reset"):
             week_reset_str = limits_from_db["week_reset"]
         else:
-            # No limits data available - try to use stored pattern
-            from src.storage.snapshot_db import load_user_preferences
-            prefs = load_user_preferences()
-            week_reset_pattern = prefs.get('week_reset_pattern')
+            # Try stored reset time from reset_times.json first
+            from src.config.reset_times import format_reset_for_display, get_reset_datetime
 
-            if week_reset_pattern:
-                # Calculate next reset from stored pattern
-                reset_result = _calculate_next_reset_from_pattern(week_reset_pattern)
-                if reset_result:
-                    # Use the pattern string for parsing
-                    week_reset_str = week_reset_pattern
-                    # Extract preset values from calculation
-                    _, preset_reset_time, preset_reset_day = reset_result
+            week_reset_dt = get_reset_datetime("week_reset")
+            if week_reset_dt:
+                # Use stored reset time
+                week_reset_str = format_reset_for_display("week_reset")
+            else:
+                # Fallback: Try to use stored pattern
+                from src.storage.snapshot_db import load_user_preferences
+                prefs = load_user_preferences()
+                week_reset_pattern = prefs.get('week_reset_pattern')
+
+                if week_reset_pattern:
+                    # Calculate next reset from stored pattern
+                    reset_result = _calculate_next_reset_from_pattern(week_reset_pattern)
+                    if reset_result:
+                        # Use the pattern string for parsing
+                        week_reset_str = week_reset_pattern
+                        # Extract preset values from calculation
+                        _, preset_reset_time, preset_reset_day = reset_result
 
         if week_reset_str:
             # Parse week reset date and filter records for weekly mode only
@@ -1309,7 +1508,63 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
             if week_reset_date:
                 # Apply offset for week navigation
                 adjusted_week_reset_date = week_reset_date - timedelta(weeks=-time_offset)
-                display_records = _filter_records_by_week(all_records, adjusted_week_reset_date)
+
+                # Weekly view needs to include data from ALL three reset periods:
+                # - Session reset (today midnight)
+                # - Week reset (all models)
+                # - Opus reset (may be different from week reset)
+                # Find the earliest reset time to ensure all data is included
+                from src.config.reset_times import get_week_start_datetime
+                from datetime import timezone as dt_timezone
+
+                # Ensure adjusted_week_reset_date is timezone-aware (UTC)
+                if adjusted_week_reset_date.tzinfo is None:
+                    adjusted_week_reset_date = adjusted_week_reset_date.replace(tzinfo=dt_timezone.utc)
+                else:
+                    adjusted_week_reset_date = adjusted_week_reset_date.astimezone(dt_timezone.utc)
+
+                earliest_week_start = adjusted_week_reset_date - timedelta(days=7)
+
+                # Check opus reset week start
+                try:
+                    opus_week_start_dt = get_week_start_datetime("opus_reset")
+                    if opus_week_start_dt:
+                        opus_week_start_utc = opus_week_start_dt.astimezone(dt_timezone.utc)
+                        if opus_week_start_utc < earliest_week_start:
+                            earliest_week_start = opus_week_start_utc
+                except Exception:
+                    pass
+
+                # Check session reset (today midnight)
+                try:
+                    from src.utils.timezone import get_local_timezone
+                    tz = get_local_timezone()
+                    today_midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_midnight_utc = today_midnight.astimezone(dt_timezone.utc)
+                    if today_midnight_utc < earliest_week_start:
+                        earliest_week_start = today_midnight_utc
+                except Exception:
+                    pass
+
+                # Filter records from earliest reset time to week_reset_date
+                week_end = adjusted_week_reset_date
+                filtered = []
+                for record in all_records:
+                    try:
+                        if hasattr(record, 'timestamp') and record.timestamp:
+                            record_dt = record.timestamp
+                            if record_dt.tzinfo is None:
+                                record_dt = record_dt.replace(tzinfo=dt_timezone.utc)
+                            else:
+                                record_dt = record_dt.astimezone(dt_timezone.utc)
+
+                            # Include records from earliest_week_start to week_end
+                            if earliest_week_start <= record_dt < week_end:
+                                filtered.append(record)
+                    except (ValueError, AttributeError):
+                        continue
+
+                display_records = filtered
 
                 # Calculate week range for display (with time boundaries)
                 week_start_datetime = adjusted_week_reset_date - timedelta(days=7)

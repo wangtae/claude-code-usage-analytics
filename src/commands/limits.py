@@ -5,6 +5,8 @@ import os
 import pty
 import select
 import time
+from src.config.reset_times import update_reset_time, format_reset_for_display
+from src.utils.timezone import get_user_timezone
 #endregion
 
 
@@ -184,6 +186,33 @@ def capture_limits() -> dict | None:
             else:
                 # Opus is 0%, use week reset time
                 opus_reset = week_reset
+
+            # Store parsed reset times for future use
+            try:
+                current_tz = get_user_timezone()
+                update_reset_time("session_reset", session_reset, current_tz)
+                update_reset_time("week_reset", week_reset, current_tz)
+                update_reset_time("opus_reset", opus_reset, current_tz)
+            except Exception:
+                # Don't fail if storage fails - just use the parsed values
+                pass
+
+            # Use stored reset times for display (fall back to parsed if not available)
+            try:
+                session_reset_display = format_reset_for_display("session_reset")
+                week_reset_display = format_reset_for_display("week_reset")
+                opus_reset_display = format_reset_for_display("opus_reset")
+
+                # Only use stored values if they're valid (not "Not available")
+                if session_reset_display != "Not available":
+                    session_reset = session_reset_display
+                if week_reset_display != "Not available":
+                    week_reset = week_reset_display
+                if opus_reset_display != "Not available":
+                    opus_reset = opus_reset_display
+            except Exception:
+                # Fall back to parsed values
+                pass
 
             return {
                 "session_pct": int(session_match.group(1)),

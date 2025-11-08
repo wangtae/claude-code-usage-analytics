@@ -15,6 +15,7 @@ from src.aggregation.daily_stats import AggregatedStats
 from src.aggregation.summary import DailyTotal, UsageSummary
 from src.models.usage_record import UsageRecord
 from src.storage.snapshot_db import get_limits_data
+from src.config.reset_times import get_week_start_datetime
 #endregion
 
 
@@ -156,29 +157,70 @@ def _calculate_session_recommended_pct(session_reset_str: str) -> float:
 
 def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> float:
     """
-    Calculate recommended usage percentage for current week based on elapsed minutes.
+    Calculate recommended usage percentage based on elapsed time + 24 hours.
 
-    Uses minute-based calculation for maximum accuracy, since week resets can occur at any time
-    (e.g., Friday 9:59am). This provides the most precise recommendations.
+    Goal: Provide a buffer by calculating recommended usage as if we're 24 hours ahead.
+    At reset time, recommended usage is 14.3% (24h / 7days).
+    At exactly 6 days elapsed, recommended usage reaches 100%.
+
+    Uses minute-based calculation for maximum accuracy.
 
     Args:
-        week_reset_str: Week reset time string (e.g., "Oct 24, 10am (Asia/Seoul)")
-        weekly_days: Number of days to use for calculation (from settings)
-                     Converted to minutes internally (e.g., 7 days = 10,080 minutes)
+        week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)")
+        weekly_days: Unused parameter (kept for compatibility with settings)
 
     Returns:
-        Recommended usage percentage (0-100)
+        Recommended usage percentage (0-100) based on (elapsed time + 24 hours)
+        - At reset time (0h elapsed): 14.3% recommended (24h / 7days)
+        - At 1 day elapsed: 28.6% recommended (48h / 7days)
+        - At 6 days elapsed: 100% recommended (168h / 7days)
 
     Example:
-        Reset: Friday 09:59, Current: Monday 14:00
-        Elapsed: 4,561 minutes, Total: 10,080 minutes (7 days)
-        Recommended: (4,561 / 10,080) * 100 = 45.2%
+        Week start: Oct 24, 9:59am (Friday)
+        Reset: Oct 31, 9:59am (Friday, 7 days later)
+        Current: Oct 24, 9:59am (Friday, 0 minutes elapsed)
+
+        Total period: 7 days = 10,080 minutes
+        Elapsed: 0 minutes
+        Buffered time: 0 + 1,440 (24h) = 1,440 minutes
+        Recommended: (1,440 / 10,080) × 100 ≈ 14.3%
     """
     from datetime import datetime, timezone as dt_timezone, timedelta
     from zoneinfo import ZoneInfo
+    from src.config.reset_times import get_week_start_datetime
     import re
 
     try:
+        # Try to use stored reset time information first for accurate week_start
+        stored_week_start = get_week_start_datetime("week_reset")
+        if stored_week_start:
+            now = datetime.now(stored_week_start.tzinfo)
+
+            # Calculate next reset (7 days after stored week_start)
+            next_reset = stored_week_start + timedelta(days=7)
+
+            # If we're past the next reset, we need to recalculate week_start
+            if now >= next_reset:
+                # Move to next week period
+                while now >= next_reset:
+                    stored_week_start = next_reset
+                    next_reset = stored_week_start + timedelta(days=7)
+
+            week_start = stored_week_start
+            reset_dt = next_reset
+
+            # Calculate elapsed time + 24 hours buffer
+            total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+            elapsed = now - week_start
+            elapsed_minutes = elapsed.total_seconds() / 60
+            
+            # Add 24-hour buffer (1,440 minutes)
+            buffered_minutes = elapsed_minutes + (24 * 60)
+            recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
+            return min(100, recommended_pct)
+
+        # Fallback to parsing reset_str if no stored data available
         # Extract timezone
         tz_match = re.search(r'\((.*?)\)', week_reset_str)
         tz_name = tz_match.group(1) if tz_match else 'UTC'
@@ -213,13 +255,10 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
             now = datetime.now(tz)
             reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-            # If reset is in the past today, find the next occurrence
-            # Weekly resets happen within the next 7 days (shown without date in Claude)
-            while reset_dt < now:
-                reset_dt = reset_dt + timedelta(days=1)
-                # Stop if we've gone more than 7 days (safety check)
-                if (reset_dt - now).days > 7:
-                    break
+            # If reset is in the past today, add 7 days to find next weekly reset
+            # Weekly resets happen exactly every 7 days
+            if reset_dt < now:
+                reset_dt = reset_dt + timedelta(days=7)
         else:
             # Parse full date format
             month_name = date_match.group(1)
@@ -265,15 +304,187 @@ def _calculate_weekly_recommended_pct(week_reset_str: str, weekly_days: int) -> 
         if now >= reset_dt:
             return 0
 
-        # Calculate total minutes in the period (e.g., 7 days = 10,080 minutes)
-        total_minutes = weekly_days * 24 * 60
+        # Calculate total period in minutes (always 7 days)
+        # 7 days × 24 hours × 60 minutes = 10,080 minutes
+        total_period_minutes = 7 * 24 * 60
 
-        # Calculate elapsed minutes (more precise than hours or days)
+        # Calculate elapsed minutes since week start
         elapsed = now - week_start
-        elapsed_minutes = elapsed.total_seconds() / 60  # seconds to minutes
+        elapsed_minutes = elapsed.total_seconds() / 60
 
-        # Calculate recommended percentage based on elapsed time in minutes
-        recommended_pct = (elapsed_minutes / total_minutes) * 100
+        # Add 24-hour buffer (1,440 minutes)
+        # This ensures recommended usage at reset time is 14.3% (1/7)
+        # and reaches 100% at exactly 6 days elapsed
+        buffered_minutes = elapsed_minutes + (24 * 60)
+        recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
+        return min(100, recommended_pct)
+
+    except Exception:
+        return 0
+
+
+def _calculate_distributed_recommended_pct(reset_str: str) -> float:
+    """
+    Calculate recommended usage percentage based on elapsed time + 24 hours.
+
+    Goal: Provide a buffer by calculating recommended usage as if we're 24 hours ahead.
+    At reset time, recommended usage is 14.3% (24h / 7days).
+    At exactly 6 days elapsed, recommended usage reaches 100%.
+
+    Uses minute-based calculation for maximum accuracy.
+
+    Args:
+        reset_str: Reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)")
+
+    Returns:
+        Recommended usage percentage (0-100) based on (elapsed time + 24 hours)
+        - At reset time (0h elapsed): 14.3% recommended (24h / 7days)
+        - At 1 day elapsed: 28.6% recommended (48h / 7days)
+        - At 6 days elapsed: 100% recommended (168h / 7days)
+
+    Example:
+        Reset: Oct 27, 9:59am
+        Week start: Oct 24, 9:59am (reset - 7 days)
+        Now: Oct 24, 9:59am (0 minutes elapsed)
+
+        Total period: 7 days = 10,080 minutes
+        Elapsed: 0 minutes
+        Buffered time: 0 + 1,440 (24h) = 1,440 minutes
+        Recommended: (1,440 / 10,080) × 100 ≈ 14.3%
+    """
+    from datetime import datetime, timezone as dt_timezone, timedelta
+    from zoneinfo import ZoneInfo
+    from src.config.reset_times import get_week_start_datetime
+    import re
+
+    try:
+        # Try to use stored reset time information first for accurate week_start
+        stored_week_start = get_week_start_datetime("opus_reset")
+        if stored_week_start:
+            now = datetime.now(stored_week_start.tzinfo)
+
+            # Calculate next reset (7 days after stored week_start)
+            next_reset = stored_week_start + timedelta(days=7)
+
+            # If we're past the next reset, we need to recalculate week_start
+            if now >= next_reset:
+                # Move to next week period
+                while now >= next_reset:
+                    stored_week_start = next_reset
+                    next_reset = stored_week_start + timedelta(days=7)
+
+            week_start = stored_week_start
+            reset_dt = next_reset
+
+            # Calculate elapsed time + 24 hours buffer
+            total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+            elapsed = now - week_start
+            elapsed_minutes = elapsed.total_seconds() / 60
+            
+            # Add 24-hour buffer (1,440 minutes)
+            buffered_minutes = elapsed_minutes + (24 * 60)
+            recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
+            return min(100, recommended_pct)
+
+        # Fallback to parsing reset_str if no stored data available
+        # Extract timezone
+        tz_match = re.search(r'\((.*?)\)', reset_str)
+        tz_name = tz_match.group(1) if tz_match else 'UTC'
+        reset_no_tz = reset_str.split(' (')[0].strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
+
+        # Try to parse "Oct 17, 10am" format (with date)
+        date_match = re.search(r'([A-Za-z]+)\s+(\d+),\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+
+        # If no date found, try time-only format like "9:59am"
+        if not date_match:
+            time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not time_match:
+                return 0
+
+            # Use today's date with the given time
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2)) if time_match.group(2) else 0
+            meridiem = time_match.group(3)
+
+            # Convert to 24-hour format
+            if meridiem == 'pm' and hour != 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+
+            # Get current time and create reset datetime for today
+            now = datetime.now(tz)
+            reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            # If reset is in the past today, add 7 days to find next weekly reset
+            # Weekly resets happen exactly every 7 days
+            if reset_dt < now:
+                reset_dt = reset_dt + timedelta(days=7)
+        else:
+            # Parse full date format
+            month_name = date_match.group(1)
+            day = int(date_match.group(2))
+            hour = int(date_match.group(3))
+            minute = int(date_match.group(4)) if date_match.group(4) else 0
+            meridiem = date_match.group(5)
+
+            # Convert to 24-hour format
+            if meridiem == 'pm' and hour != 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+
+            # Parse month
+            year = datetime.now(tz).year
+            month_num = datetime.strptime(month_name, '%b').month
+
+            # Create reset datetime
+            reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+
+            # Get current time
+            now = datetime.now(tz)
+
+            # If reset is in the past, it might be next year
+            if reset_dt < now:
+                # Check if adding 7 days puts us in the future
+                next_reset = reset_dt + timedelta(days=7)
+                if next_reset > now:
+                    reset_dt = next_reset
+                else:
+                    # Must be next year
+                    reset_dt = reset_dt.replace(year=year + 1)
+
+        # Week started 7 days before reset
+        week_start = reset_dt - timedelta(days=7)
+
+        # If we're before the week start, we're looking at next week
+        if now < week_start:
+            return 0
+
+        # If we're after the reset, we're in a new week
+        if now >= reset_dt:
+            return 0
+
+        # Calculate total period in minutes (always 7 days)
+        total_period_minutes = 7 * 24 * 60  # 10,080 minutes
+
+        # Calculate elapsed minutes since week start
+        elapsed = now - week_start
+        elapsed_minutes = elapsed.total_seconds() / 60
+
+        # Add 24-hour buffer (1,440 minutes)
+        # This ensures recommended usage at reset time is 14.3% (1/7)
+        # and reaches 100% at exactly 6 days elapsed
+        buffered_minutes = elapsed_minutes + (24 * 60)
+        recommended_pct = (buffered_minutes / total_period_minutes) * 100
+
         return min(100, recommended_pct)
 
     except Exception:
@@ -653,10 +864,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             week_reset = format_reset_date(limits['week_reset'])
             opus_reset = format_reset_date(limits['opus_reset'])
 
-            # Calculate costs for each limit period
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            # Calculate costs for each limit period (based on reset times)
+            session_stats = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            today_cost = _calculate_today_cost(records)
 
             # Calculate recommended usage percentages
             from datetime import datetime, timezone as dt_timezone
@@ -677,10 +889,11 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
-            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            # Parse opus reset time with distributed calculation (separate from week reset)
+            # Opus uses even distribution across 7-day period for gradual red bar reduction
             opus_recommended_pct = 0
             if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
 
             # Create table structure with 3 rows per limit
             # M1/M2 modes use no padding, M3/M4 modes use reduced padding for compact display
@@ -691,7 +904,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             # M1 mode: compact style with bar+percentage combined, no border
             if is_m1_mode:
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 # Check if recommended usage indicator should be shown for session
                 if session_recommended_pct > 0:
@@ -706,7 +919,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(session_bar)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -727,7 +947,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(week_bar)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -748,7 +975,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -756,7 +990,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m2_mode:
                 # M2 mode: M1 style (no border) with M4 bars (percentage separated)
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended_separate(
@@ -773,7 +1007,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -797,7 +1038,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -821,7 +1069,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -829,7 +1084,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m3_mode:
                 # M3 mode: dashboard style with bar+percentage combined (like M1) and panel wrapper
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended(
@@ -843,7 +1098,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(session_bar)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -864,7 +1126,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(week_bar)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -885,7 +1154,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -898,7 +1174,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             elif is_m4_mode:
                 # M4 mode: dashboard style with percentage separated and panel wrapper
                 # Session limit (3 rows)
-                limits_table.add_row("Current session")
+                limits_table.add_row(f"Current session (T {format_cost(today_cost)})")
 
                 if session_recommended_pct > 0:
                     session_bar = _create_usage_bar_with_recommended_separate(
@@ -915,7 +1191,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -939,7 +1222,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -963,7 +1253,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -1080,13 +1377,17 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             project_breakdown = _create_project_breakdown(records)
             sections_to_render.append(("project", project_breakdown))
 
-            # Check weekly display mode (limits or calendar)
+            # Check weekly display mode (limits, calendar, or recent7)
             weekly_display_mode = view_mode_ref.get('weekly_display_mode', 'limits') if view_mode_ref else 'limits'
 
             if weekly_display_mode == 'calendar':
                 # Show calendar week (Mon-Sun, current ISO week)
                 daily_breakdown_calendar = _create_daily_breakdown_calendar_week(records)
                 sections_to_render.append(("daily_calendar", daily_breakdown_calendar))
+            elif weekly_display_mode == 'recent7':
+                # Show recent 7 days (rolling window)
+                daily_breakdown_recent7 = _create_daily_breakdown_recent7(records)
+                sections_to_render.append(("daily_recent7", daily_breakdown_recent7))
             else:
                 # Show Usage Limits week (default)
                 # Get week range from view_mode_ref if available
@@ -1163,26 +1464,58 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
     console.print(footer, end="")
 
 
-def _calculate_session_cost(records: list[UsageRecord]) -> float:
+def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str = None) -> dict:
     """
-    Calculate cost for session limit period (last 5 hours, all models).
+    Calculate cost and tokens for current session period (since last session reset, all models).
 
     Args:
         records: List of usage records
+        session_reset_str: Session reset time string (e.g., "2pm ($57.88)")
+                          If None, falls back to last 5 hours
 
     Returns:
-        Total cost for session period
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    five_hours_ago = now - timedelta(hours=5)
+    # Parse session start time from reset string
+    # Reset string format: "2pm ($57.88)" or "2h 30m ($45.12)"
+    session_start = None
+
+    if session_reset_str:
+        try:
+            # Extract time part (before parenthesis)
+            time_part = session_reset_str.split('(')[0].strip()
+
+            # Parse "Xh Ym" format (e.g., "2h 30m")
+            hours_match = re.search(r'(\d+)h', time_part)
+            mins_match = re.search(r'(\d+)m', time_part)
+
+            if hours_match or mins_match:
+                hours = int(hours_match.group(1)) if hours_match else 0
+                minutes = int(mins_match.group(1)) if mins_match else 0
+                total_minutes = hours * 60 + minutes
+
+                now = datetime.now(timezone.utc)
+                session_start = now - timedelta(minutes=total_minutes)
+        except Exception:
+            pass
+
+    # Fallback: use 5 hours ago
+    if session_start is None:
+        now = datetime.now(timezone.utc)
+        session_start = now - timedelta(hours=5)
 
     session_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
-        if record.timestamp >= five_hours_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= session_start and record.model and record.token_usage and record.model != "<synthetic>":
             cost = calculate_cost(
                 record.token_usage.input_tokens,
                 record.token_usage.output_tokens,
@@ -1191,64 +1524,308 @@ def _calculate_session_cost(records: list[UsageRecord]) -> float:
                 record.token_usage.cache_read_tokens,
             )
             session_cost += cost
+            input_tokens += record.token_usage.input_tokens
+            output_tokens += record.token_usage.output_tokens
+            cache_creation_tokens += record.token_usage.cache_creation_tokens
+            cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return session_cost
+    return {
+        "cost": session_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
 
 
-def _calculate_weekly_sonnet_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: str = None) -> dict:
     """
-    Calculate cost for weekly sonnet usage (last 7 days, sonnet models only).
+    Calculate cost and tokens for current week period (since week reset, all models for "all models" quota).
+
+    Note: Despite the function name, this calculates ALL models cost for the weekly quota,
+    not just sonnet. The name is kept for backward compatibility.
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
+        week_reset_str: Week reset time string (e.g., "Oct 31, 9:59am (Asia/Seoul)" or "10/31 9:59am")
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
-        Total cost for weekly sonnet usage
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Try to use stored reset time first
+    week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("week_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
+            # Use the provided records as-is (already contains full history in weekly view)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse week_reset_str
+    if week_start is None and week_reset_str:
+        try:
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', week_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = week_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/31 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
-            # Check if it's a sonnet model
-            if "sonnet" in record.model.lower():
-                cost = calculate_cost(
-                    record.token_usage.input_tokens,
-                    record.token_usage.output_tokens,
-                    record.model,
-                    record.token_usage.cache_creation_tokens,
-                    record.token_usage.cache_read_tokens,
-                )
-                weekly_cost += cost
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
+            # Calculate cost for ALL models (not just sonnet)
+            cost = calculate_cost(
+                record.token_usage.input_tokens,
+                record.token_usage.output_tokens,
+                record.model,
+                record.token_usage.cache_creation_tokens,
+                record.token_usage.cache_read_tokens,
+            )
+            weekly_cost += cost
+            input_tokens += record.token_usage.input_tokens
+            output_tokens += record.token_usage.output_tokens
+            cache_creation_tokens += record.token_usage.cache_creation_tokens
+            cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return weekly_cost
+    return {
+        "cost": weekly_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
 
 
-def _calculate_weekly_opus_cost(records: list[UsageRecord]) -> float:
+def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> dict:
     """
-    Calculate cost for weekly opus usage (last 7 days, opus models only).
+    Calculate cost and tokens for current Opus week period (since opus reset, opus models only).
 
     Args:
-        records: List of usage records
+        records: List of usage records (may be filtered by view mode)
+        opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
+                       If None, falls back to stored reset time or last 7 days
 
     Returns:
-        Total cost for weekly opus usage
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+    import re
 
-    # Use timezone-aware datetime to match record.timestamp
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
+    # Try to use stored reset time first
+    week_start = None
+    use_stored_time = False
+    try:
+        week_start_dt = get_week_start_datetime("opus_reset")
+        if week_start_dt:
+            # Convert to UTC for comparison with records
+            week_start = week_start_dt.astimezone(timezone.utc)
+            use_stored_time = True
+            # Use the provided records as-is (already contains full history in weekly view)
+    except Exception:
+        pass
+
+    # If stored time is not available, try to parse opus_reset_str
+    if week_start is None and opus_reset_str:
+        try:
+            # Extract timezone
+            tz_match = re.search(r'\((.*?)\)', opus_reset_str)
+            tz_name = tz_match.group(1) if tz_match else 'UTC'
+            reset_no_tz = opus_reset_str.split(' (')[0].strip()
+
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+            # Try to parse "Oct 17, 10am" or "10/31 9:59am" format
+            date_match = re.search(r'([A-Za-z]+)\s+(\d+),?\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+            if not date_match:
+                # Try numeric date format: "10/27 9:59am"
+                date_match = re.search(r'(\d+)/(\d+)\s+(\d+):?(\d*)(am|pm)', reset_no_tz)
+                if date_match:
+                    month_num = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    hour = int(date_match.group(3))
+                    minute = int(date_match.group(4)) if date_match.group(4) else 0
+                    meridiem = date_match.group(5)
+                else:
+                    # Try time-only format: "9:59am"
+                    time_match = re.search(r'(\d+):?(\d*)(am|pm)', reset_no_tz)
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        meridiem = time_match.group(3)
+
+                        # Convert to 24-hour format
+                        if meridiem == 'pm' and hour != 12:
+                            hour += 12
+                        elif meridiem == 'am' and hour == 12:
+                            hour = 0
+
+                        # Use today's date
+                        now = datetime.now(tz)
+                        reset_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                        # If reset is in the past, add days until it's in the future
+                        while reset_dt < now and (reset_dt + timedelta(days=7) - now).days <= 7:
+                            reset_dt = reset_dt + timedelta(days=1)
+
+                        week_start = reset_dt - timedelta(days=7)
+                    else:
+                        raise ValueError("Could not parse time")
+            else:
+                # Parse month name format
+                month_name = date_match.group(1)
+                day = int(date_match.group(2))
+                hour = int(date_match.group(3))
+                minute = int(date_match.group(4)) if date_match.group(4) else 0
+                meridiem = date_match.group(5)
+
+                # Parse month
+                year = datetime.now(tz).year
+                month_num = datetime.strptime(month_name, '%b').month
+
+            if 'month_num' in locals():
+                # Convert to 24-hour format
+                if meridiem == 'pm' and hour != 12:
+                    hour += 12
+                elif meridiem == 'am' and hour == 12:
+                    hour = 0
+
+                # Create reset datetime
+                reset_dt = datetime(year, month_num, day, hour, minute, 0, tzinfo=tz)
+                now = datetime.now(tz)
+
+                # If reset is in the past, might be next year or next week
+                if reset_dt < now:
+                    next_reset = reset_dt + timedelta(days=7)
+                    if next_reset > now:
+                        reset_dt = next_reset
+                    else:
+                        reset_dt = reset_dt.replace(year=year + 1)
+
+                week_start = reset_dt - timedelta(days=7)
+
+                # Convert to UTC for comparison with records
+                week_start = week_start.astimezone(timezone.utc)
+
+        except Exception:
+            pass
+
+    # Fallback: use 7 days ago
+    if week_start is None:
+        now = datetime.now(timezone.utc)
+        week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
-        if record.timestamp >= seven_days_ago and record.model and record.token_usage and record.model != "<synthetic>":
+        if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
             # Check if it's an opus model
             if "opus" in record.model.lower():
                 cost = calculate_cost(
@@ -1259,8 +1836,61 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord]) -> float:
                     record.token_usage.cache_read_tokens,
                 )
                 weekly_cost += cost
+                input_tokens += record.token_usage.input_tokens
+                output_tokens += record.token_usage.output_tokens
+                cache_creation_tokens += record.token_usage.cache_creation_tokens
+                cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return weekly_cost
+    return {
+        "cost": weekly_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
+
+
+def _calculate_today_cost(records: list[UsageRecord]) -> float:
+    """
+    Calculate cost for today (since midnight in local timezone).
+
+    Args:
+        records: List of usage records
+
+    Returns:
+        Total cost for today
+    """
+    from src.models.pricing import calculate_cost
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from src.utils.timezone import get_user_timezone
+
+    # Get today's start (midnight in local timezone)
+    tz_name = get_user_timezone()
+    try:
+        local_tz = ZoneInfo(tz_name)
+    except Exception:
+        local_tz = timezone.utc
+
+    now = datetime.now(local_tz)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Convert to UTC for comparison with records
+    today_start_utc = today_start.astimezone(timezone.utc)
+
+    today_cost = 0.0
+    for record in records:
+        if record.timestamp >= today_start_utc and record.model and record.token_usage and record.model != "<synthetic>":
+            cost = calculate_cost(
+                record.token_usage.input_tokens,
+                record.token_usage.output_tokens,
+                record.model,
+                record.token_usage.cache_creation_tokens,
+                record.token_usage.cache_read_tokens,
+            )
+            today_cost += cost
+
+    return today_cost
 
 
 def _calculate_totals_for_month(summary: UsageSummary, year: int, month: int) -> DailyTotal | None:
@@ -1466,11 +2096,12 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             week_reset = limits['week_reset']
             opus_reset = limits['opus_reset']
 
-            # Calculate costs for each limit period
+            # Calculate costs for each limit period (based on reset times)
             from datetime import timedelta
-            session_cost = _calculate_session_cost(records)  # Last 5 hours, all models
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records)  # Weekly, sonnet only
-            weekly_opus_cost = _calculate_weekly_opus_cost(records)  # Weekly, opus only
+            session_stats = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            today_cost = _calculate_today_cost(records)
 
             # Get color mode and colors from view_mode_ref
             from src.config.defaults import DEFAULT_COLORS
@@ -1496,10 +2127,11 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             if limits.get('week_reset'):
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
-            # Parse opus reset time to calculate elapsed days (separate from week reset)
+            # Parse opus reset time with distributed calculation (separate from week reset)
+            # Opus uses even distribution across 7-day period for gradual red bar reduction
             opus_recommended_pct = 0
             if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_weekly_recommended_pct(limits['opus_reset'], weekly_days)
+                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
 
             # Calculate bar width based on terminal width (same as usage mode)
             terminal_width = console.width if console else 120
@@ -1510,7 +2142,7 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             limits_table.add_column("Content", justify="left")
 
             # Session limit (3 rows)
-            limits_table.add_row("Current session")
+            limits_table.add_row(f"Current session (Today {format_cost(today_cost)})")
 
             if session_recommended_pct > 0:
                 session_bar = _create_usage_bar_with_recommended(
@@ -1524,7 +2156,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
                 session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
             limits_table.add_row(session_bar)
-            limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+            # Weekly mode: show detailed token info with cache
+            session_io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+            session_cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+            limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{session_io_str}] (C:{session_cache_str})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Week limit (3 rows)
@@ -1542,7 +2177,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
                 week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
             limits_table.add_row(week_bar)
-            limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+            # Weekly mode: show detailed token info with cache
+            week_io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+            week_cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+            limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{week_io_str}] (C:{week_cache_str})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -1563,7 +2201,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             limits_table.add_row(opus_bar)
             # Only show reset info if usage > 0%
             if limits["opus_pct"] > 0:
-                limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                opus_io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                opus_cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{opus_io_str}] (C:{opus_cache_str})", style=DIM)
 
             # Wrap in outer "Usage Limits" panel (expand to fit terminal width)
             limits_outer_panel = Panel(
@@ -2042,6 +2683,135 @@ def _create_daily_breakdown_calendar_week(records: list[UsageRecord]) -> Panel:
     return Panel(
         table,
         title="[bold]Daily Usage (Calendar Week)",
+        subtitle=subtitle_text,
+        border_style="white",
+        expand=True,
+    )
+
+
+def _create_daily_breakdown_recent7(records: list[UsageRecord]) -> Panel:
+    """
+    Create daily usage breakdown for recent 7 days (today and last 6 days).
+    Shows rolling 7-day window ending today.
+
+    Args:
+        records: List of usage records
+
+    Returns:
+        Panel with daily breakdown in graph format
+    """
+    from src.models.pricing import calculate_cost, format_cost
+    from datetime import timedelta
+
+    # Get today's date and calculate 7 days ago
+    now = datetime.now().astimezone()
+    today = now.date()
+    seven_days_ago = today - timedelta(days=6)  # Today + 6 days ago = 7 days
+
+    # Aggregate by date (format: "YYYY-MM-DD")
+    daily_data: dict[str, dict] = defaultdict(lambda: {
+        "total_tokens": 0,
+        "cost": 0.0
+    })
+
+    for record in records:
+        if record.token_usage and record.timestamp:
+            timestamp = record.timestamp
+            if timestamp.tzinfo:
+                local_ts = timestamp.astimezone()
+            else:
+                local_ts = timestamp
+
+            date = local_ts.strftime("%Y-%m-%d")
+            record_date = local_ts.date()
+
+            # Only include records within recent 7 days
+            if seven_days_ago <= record_date <= today:
+                daily_data[date]["total_tokens"] += (
+                    record.token_usage.input_tokens + record.token_usage.output_tokens
+                )
+
+                if record.model and record.model != "<synthetic>":
+                    cost = calculate_cost(
+                        record.token_usage.input_tokens,
+                        record.token_usage.output_tokens,
+                        record.model,
+                        record.token_usage.cache_creation_tokens,
+                        record.token_usage.cache_read_tokens,
+                    )
+                    daily_data[date]["cost"] += cost
+
+    # Generate all dates in the recent 7 days
+    all_dates = []
+    current_date = seven_days_ago
+    while current_date <= today:
+        date_str = current_date.strftime("%Y-%m-%d")
+        if date_str in daily_data:
+            all_dates.append((date_str, daily_data[date_str]))
+        else:
+            # Day with no data
+            all_dates.append((date_str, {
+                "total_tokens": 0,
+                "cost": 0.0
+            }))
+        current_date += timedelta(days=1)
+
+    # Calculate totals and max for scaling
+    total_tokens = sum(data["total_tokens"] for _, data in all_dates)
+    max_tokens = max((data["total_tokens"] for _, data in all_dates), default=0)
+
+    # Sort by date in ascending order (oldest first)
+    sorted_dates = sorted(all_dates, reverse=False)
+
+    # Create table with bars
+    table = Table(show_header=True, box=None, padding=(0, 2))
+    table.add_column("Date", style="white", justify="left", width=30)
+    table.add_column("", justify="left", width=20)  # Bar column
+    table.add_column("Tokens", style=ORANGE, justify="right", width=12)
+    table.add_column("%", style=CYAN, justify="right", width=8)
+    table.add_column("Cost", style="green", justify="right", width=10)
+
+    for idx, (date, data) in enumerate(sorted_dates, start=1):
+        tokens = data["total_tokens"]
+        percentage = (tokens / total_tokens * 100) if total_tokens > 0 else 0
+
+        # Parse date and get day of week
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        day_name = date_obj.strftime("%a")  # Mon, Tue, Wed, etc.
+
+        # Format: [1] 2025-10-15, Mon
+        date_with_shortcut = f"[yellow][{idx}][/yellow] {date}, {day_name}"
+
+        # If no data for this day, show "-" for tokens/cost and empty bar
+        if tokens == 0:
+            bar = Text("▬" * 20, style=DIM)
+            tokens_display = "[dim]-[/dim]"
+            percentage_display = "[dim]-[/dim]"
+            cost_display = "[dim]-[/dim]"
+        else:
+            bar = _create_bar(tokens, max_tokens, width=20)
+            tokens_display = _format_number(tokens)
+            percentage_display = f"[cyan]{percentage:.1f}%[/cyan]"
+            cost_display = format_cost(data["cost"])
+
+        table.add_row(
+            date_with_shortcut,
+            bar,
+            tokens_display,
+            percentage_display,
+            cost_display,
+        )
+
+    # Create dynamic subtitle based on actual number of dates
+    num_dates = len(sorted_dates)
+    if num_dates > 0:
+        subtitle_text = f"[dim]Press number keys (1-{num_dates}) to view detailed hourly breakdown[/dim]"
+    else:
+        subtitle_text = None
+
+    return Panel(
+        table,
+        title="[bold]Daily Usage (Recent 7 Days)",
         subtitle=subtitle_text,
         border_style="white",
         expand=True,
@@ -3424,6 +4194,9 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                 if weekly_display_mode == 'calendar':
                     # Calendar mode - use yellow (standard selection color)
                     footer.append("[w]eekly", style=f"black on {YELLOW}")
+                elif weekly_display_mode == 'recent7':
+                    # Recent 7 days mode - use purple/magenta
+                    footer.append("[w]eekly", style="black on magenta")
                 else:
                     # Limit Period mode - use bright red (same as Usage Limits bar color)
                     footer.append("[w]eekly", style="black on bright_red")
@@ -3553,7 +4326,12 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
                     # Show current mode name
                     if view_mode == "weekly":
                         current_mode = view_mode_ref.get('weekly_display_mode', 'limits')
-                        mode_name = "Weekly Limit Period" if current_mode == "limits" else "Calendar Week"
+                        if current_mode == "limits":
+                            mode_name = "Weekly Limit Period"
+                        elif current_mode == "calendar":
+                            mode_name = "Calendar Week"
+                        else:  # recent7
+                            mode_name = "Recent 7 Days"
                     elif view_mode == "monthly":
                         current_mode = view_mode_ref.get('monthly_display_mode', 'daily')
                         mode_name = "Daily" if current_mode == "daily" else "Weekly"
@@ -3593,7 +4371,6 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("\n")
         elif view_mode == "heatmap":
             # Navigation and quit instructions for heatmap mode
-            from datetime import datetime
             time_offset = view_mode_ref.get('offset', 0) if view_mode_ref else 0
             current_year = datetime.now().year + time_offset
 
@@ -3627,6 +4404,83 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("r", style="white")
             footer.append("]efresh: ", style=DIM)
             footer.append(f"{last_update_time} ", style="bold cyan")
+
+        # Add Gist sync status (if available) - hide in usage mode for compact display
+        if view_mode != "usage" and view_mode_ref and view_mode_ref.get('sync_status'):
+            sync_status = view_mode_ref['sync_status']
+            footer.append(" | ", style=DIM)
+            footer.append("Gist: ", style=DIM)
+
+            if sync_status.get('is_syncing'):
+                footer.append("Syncing... ", style="bold yellow")
+                footer.append("◼", style="bold yellow blink")
+            elif sync_status.get('error'):
+                error_msg = sync_status['error']
+                # Truncate long error messages
+                if len(error_msg) > 50:
+                    error_msg = error_msg[:47] + "..."
+                footer.append(f"✗ Error: {error_msg}", style="bold red")
+            elif sync_status.get('last_sync'):
+                last_sync = sync_status['last_sync']
+                now = datetime.now()
+                diff = now - last_sync
+
+                # Format time ago
+                if diff.total_seconds() < 60:
+                    time_ago = "Just now"
+                elif diff.total_seconds() < 3600:
+                    minutes = int(diff.total_seconds() / 60)
+                    time_ago = f"{minutes}분 전"
+                elif diff.total_seconds() < 86400:
+                    hours = int(diff.total_seconds() / 3600)
+                    time_ago = f"{hours}시간 전"
+                else:
+                    days = int(diff.total_seconds() / 86400)
+                    time_ago = f"{days}일 전"
+
+                footer.append(f"✓ {time_ago}", style="bold green")
+
+                # Show next sync time
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    time_until = next_sync - now
+
+                    # Format time until next sync
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            next_text = f" (다음: {seconds}초 후)"
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            next_text = f" (다음: {minutes}분 후)"
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            next_text = f" (다음: {hours}시간 {minutes}분 후)"
+
+                        footer.append(next_text, style=DIM)
+            else:
+                # Not synced yet - show when next sync will happen
+                if sync_status.get('next_sync'):
+                    next_sync = sync_status['next_sync']
+                    now = datetime.now()
+                    time_until = next_sync - now
+
+                    if time_until.total_seconds() > 0:
+                        if time_until.total_seconds() < 60:
+                            seconds = int(time_until.total_seconds())
+                            footer.append(f"Not synced (다음: {seconds}초 후)", style=DIM)
+                        elif time_until.total_seconds() < 3600:
+                            minutes = int(time_until.total_seconds() / 60)
+                            footer.append(f"Not synced (다음: {minutes}분 후)", style=DIM)
+                        else:
+                            hours = int(time_until.total_seconds() / 3600)
+                            minutes = int((time_until.total_seconds() % 3600) / 60)
+                            footer.append(f"Not synced (다음: {hours}시간 {minutes}분 후)", style=DIM)
+                    else:
+                        footer.append("Not synced", style=DIM)
+                else:
+                    footer.append("Not synced", style=DIM)
 
     else:
         # No live mode, just date range if provided

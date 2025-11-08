@@ -39,10 +39,25 @@ def export_to_json(
     if db_path is None:
         db_path = get_current_machine_db_path()
 
-    if not db_path.exists():
-        raise FileNotFoundError(f"Database not found: {db_path}")
-
     machine_name = get_machine_name() or "Unknown"
+
+    # If database doesn't exist yet, return empty export
+    if not db_path.exists():
+        return {
+            "machine_name": machine_name,
+            "export_date": datetime.now(timezone.utc).isoformat(),
+            "data_range": {
+                "oldest": None,
+                "newest": None,
+            },
+            "records": [],
+            "stats": {
+                "total_records": 0,
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
 
     # Open database in READ-ONLY mode (URI syntax)
     # This prevents any accidental writes

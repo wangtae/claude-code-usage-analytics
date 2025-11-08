@@ -1136,6 +1136,27 @@ def load_recent_usage_records(
     return recent_records
 
 
+def load_last_n_days_records(days: int = 7) -> list[UsageRecord]:
+    """
+    Load usage records from the last N days (including today).
+
+    Args:
+        days: Number of days to include (default: 7, meaning today + 6 days ago)
+
+    Returns:
+        List of UsageRecord objects from the last N days, sorted chronologically.
+    """
+    today = datetime.now(timezone.utc).date()
+    cutoff_date = (today - timedelta(days=days-1)).strftime("%Y-%m-%d")
+
+    all_records = load_all_devices_historical_records_cached()
+    if not all_records:
+        return []
+
+    recent_records = [record for record in all_records if record.date_key >= cutoff_date]
+    return recent_records
+
+
 #endregion
 
 
