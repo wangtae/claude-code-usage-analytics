@@ -1508,7 +1508,63 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
             if week_reset_date:
                 # Apply offset for week navigation
                 adjusted_week_reset_date = week_reset_date - timedelta(weeks=-time_offset)
-                display_records = _filter_records_by_week(all_records, adjusted_week_reset_date)
+
+                # Weekly view needs to include data from ALL three reset periods:
+                # - Session reset (today midnight)
+                # - Week reset (all models)
+                # - Opus reset (may be different from week reset)
+                # Find the earliest reset time to ensure all data is included
+                from src.config.reset_times import get_week_start_datetime
+                from datetime import timezone as dt_timezone
+
+                # Ensure adjusted_week_reset_date is timezone-aware (UTC)
+                if adjusted_week_reset_date.tzinfo is None:
+                    adjusted_week_reset_date = adjusted_week_reset_date.replace(tzinfo=dt_timezone.utc)
+                else:
+                    adjusted_week_reset_date = adjusted_week_reset_date.astimezone(dt_timezone.utc)
+
+                earliest_week_start = adjusted_week_reset_date - timedelta(days=7)
+
+                # Check opus reset week start
+                try:
+                    opus_week_start_dt = get_week_start_datetime("opus_reset")
+                    if opus_week_start_dt:
+                        opus_week_start_utc = opus_week_start_dt.astimezone(dt_timezone.utc)
+                        if opus_week_start_utc < earliest_week_start:
+                            earliest_week_start = opus_week_start_utc
+                except Exception:
+                    pass
+
+                # Check session reset (today midnight)
+                try:
+                    from src.utils.timezone import get_local_timezone
+                    tz = get_local_timezone()
+                    today_midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_midnight_utc = today_midnight.astimezone(dt_timezone.utc)
+                    if today_midnight_utc < earliest_week_start:
+                        earliest_week_start = today_midnight_utc
+                except Exception:
+                    pass
+
+                # Filter records from earliest reset time to week_reset_date
+                week_end = adjusted_week_reset_date
+                filtered = []
+                for record in all_records:
+                    try:
+                        if hasattr(record, 'timestamp') and record.timestamp:
+                            record_dt = record.timestamp
+                            if record_dt.tzinfo is None:
+                                record_dt = record_dt.replace(tzinfo=dt_timezone.utc)
+                            else:
+                                record_dt = record_dt.astimezone(dt_timezone.utc)
+
+                            # Include records from earliest_week_start to week_end
+                            if earliest_week_start <= record_dt < week_end:
+                                filtered.append(record)
+                    except (ValueError, AttributeError):
+                        continue
+
+                display_records = filtered
 
                 # Calculate week range for display (with time boundaries)
                 week_start_datetime = adjusted_week_reset_date - timedelta(days=7)
