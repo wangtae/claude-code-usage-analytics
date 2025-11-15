@@ -40,14 +40,15 @@ def capture_limits() -> dict | None:
         master, slave = pty.openpty()
 
         # Start claude /usage with the PTY
-        # Run from home directory to avoid trust prompts in project folders
+        # Run from current working directory (should be a trusted project folder)
+        # Note: If ccu is run from untrusted folder, this will fail and return untrusted_folder error
         process = subprocess.Popen(
             ['claude', '/usage'],
             stdin=slave,
             stdout=slave,
             stderr=slave,
             close_fds=True,
-            cwd=os.path.expanduser('~')
+            cwd=os.getcwd()
         )
 
         # Close slave in parent process (child keeps it open)
@@ -167,13 +168,23 @@ def capture_limits() -> dict | None:
             f.write(f"week_match: {week_match.groups() if week_match else None}\n")
             f.write(f"opus_match: {opus_match.groups() if opus_match else None}\n")
 
-        # Check if Claude Code returned an error (untrusted folder)
+        # Check if Claude Code returned an error
         if 'Error: Failed to load usage data' in clean_output:
-            return {
-                "error": "untrusted_folder",
-                "message": "Claude Code cannot load usage data in untrusted folder",
-                "debug_file": debug_file.name
-            }
+            # Distinguish between untrusted folder and Claude server issues
+            # Untrusted folder shows "Do you want to work in this folder?" prompt
+            # Server issues show error directly without prompt
+            if 'Do you trust' in clean_output or 'Do you want to work in this folder' in clean_output:
+                return {
+                    "error": "untrusted_folder",
+                    "message": "Claude Code cannot load usage data in untrusted folder",
+                    "debug_file": debug_file.name
+                }
+            else:
+                return {
+                    "error": "claude_server_error",
+                    "message": "Claude Code failed to load usage data (server/network issue)",
+                    "debug_file": debug_file.name
+                }
 
         # If parsing failed, return error with debug file path
         if not (session_match and week_match and opus_match):

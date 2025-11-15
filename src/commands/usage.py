@@ -1408,11 +1408,12 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 if limits_result['completed']:
                     limits = limits_result['data']
                     if limits and "error" in limits:
+                        from rich.panel import Panel
+                        from rich.text import Text
+
                         # Check if it's an untrusted folder error
                         if limits.get("error") == "untrusted_folder":
                             console.clear()
-                            from rich.panel import Panel
-                            from rich.text import Text
 
                             error_msg = Text()
                             error_msg.append("⚠️  ", style="bold yellow")
@@ -1436,6 +1437,12 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                             console.print(Panel(error_msg, border_style="yellow", title="[bold yellow]폴더 권한 필요[/bold yellow]"))
                             console.print(f"\n[dim]Debug file: {limits.get('debug_file', 'N/A')}[/dim]")
                             return
+
+                        # Check if it's a Claude server error (temporary)
+                        elif limits.get("error") == "claude_server_error":
+                            # Don't show fullscreen error, just keep error in limits
+                            # Footer will display the error status
+                            pass
                     elif limits and "error" not in limits:
                         try:
                             save_limits_snapshot(

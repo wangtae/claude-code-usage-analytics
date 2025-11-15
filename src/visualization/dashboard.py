@@ -707,7 +707,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
         limits_data = _load_limits_data()
         _display_heatmap(console, stats, limits_data, year=target_year)
         # Show footer with keyboard shortcuts
-        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
         console.print()
         console.print(footer, end="")
         return
@@ -780,7 +780,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
         render_device_statistics(console, week_offset=device_week_offset, display_period=device_display_period)
         # Show footer with keyboard shortcuts and calculated date range
-        footer = _create_footer(devices_date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(devices_date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
         console.print()
         console.print(footer, end="")
         return
@@ -1271,7 +1271,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 )
 
         # Create footer
-        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
 
         # Group everything together and print once
         final_output = RichGroup(
@@ -1292,7 +1292,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
         hourly_detail_hour = view_mode_ref.get("hourly_detail_hour")
 
     # Create footer with export info, date range, and view mode
-    footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+    footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
 
     # Create breakdowns for each view mode
     sections_to_render = []
@@ -4070,7 +4070,7 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
     return Group(panel)
 
 
-def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: str = "monthly", in_live_mode: bool = False, is_updating: bool = False, view_mode_ref: dict | None = None) -> Text:
+def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: str = "monthly", in_live_mode: bool = False, is_updating: bool = False, view_mode_ref: dict | None = None, limits_from_db: dict | None = None) -> Text:
     """
     Create footer with export command info, date range, and view mode.
 
@@ -4081,6 +4081,7 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
         in_live_mode: If True, show keyboard shortcuts for mode switching
         is_updating: If True, show updating spinner instead of last update time
         view_mode_ref: Reference dict for view mode state (includes usage_display_mode)
+        limits_from_db: Limits data (may contain error info)
 
     Returns:
         Text with export instructions, date range, and view mode info
@@ -4488,6 +4489,40 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("Data range: ", style=DIM)
             footer.append(f"{date_range}", style="bold cyan")
             footer.append("\n", style=DIM)
+
+    # Add error/warning status at the bottom (in both live and non-live modes)
+    warnings = []
+
+    # Check for Claude Code usage query error
+    if limits_from_db and limits_from_db.get("error") == "claude_server_error":
+        warnings.append(("⚠️  Claude Code Usage 쿼리 실패 (서버/네트워크 문제)", "bold yellow"))
+
+    # Check for Gist sync status (only in live mode)
+    if in_live_mode and view_mode_ref and view_mode_ref.get('sync_status'):
+        sync_status = view_mode_ref['sync_status']
+
+        # Check if sync failed
+        if sync_status.get('error'):
+            warnings.append(("⚠️  Gist 동기화 실패", "bold red"))
+        # Check if auto-sync enabled but never synced
+        elif not sync_status.get('last_sync') and not sync_status.get('is_syncing'):
+            # Check if auto-sync is enabled
+            from src.storage.snapshot_db import get_user_preferences
+            prefs = get_user_preferences()
+            if prefs and prefs.get('gist_auto_sync') == '1':
+                warnings.append(("⚠️  Gist 미동기화", "bold yellow"))
+
+    # Display all warnings
+    if warnings:
+        footer.append("\n", style=DIM)
+        footer.append("─" * 80, style=DIM)
+        footer.append("\n", style=DIM)
+        for warning_text, warning_style in warnings:
+            footer.append(warning_text, style=warning_style)
+            footer.append(" │ ", style=DIM)
+        # Remove last separator
+        if footer.plain[-3:] == " │ ":
+            footer = Text(footer.plain[:-3], style=footer.style)
 
     return footer
 
