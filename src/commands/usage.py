@@ -1407,7 +1407,36 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 # Save limits if capture completed successfully
                 if limits_result['completed']:
                     limits = limits_result['data']
-                    if limits and "error" not in limits:
+                    if limits and "error" in limits:
+                        # Check if it's an untrusted folder error
+                        if limits.get("error") == "untrusted_folder":
+                            console.clear()
+                            from rich.panel import Panel
+                            from rich.text import Text
+
+                            error_msg = Text()
+                            error_msg.append("⚠️  ", style="bold yellow")
+                            error_msg.append("Claude Code가 신뢰하지 않는 폴더에서 실행됨\n\n", style="bold yellow")
+                            error_msg.append("ccu가 Usage Limits 데이터를 가져오려면 Claude Code가 현재 폴더를 신뢰해야 합니다.\n\n", style="white")
+                            error_msg.append("해결 방법:\n", style="bold cyan")
+                            error_msg.append("1. 터미널에서 ", style="white")
+                            error_msg.append("claude", style="bold green")
+                            error_msg.append(" 명령어를 먼저 실행하세요\n", style="white")
+                            error_msg.append("2. Claude Code가 현재 폴더에 대한 권한을 요청하면 ", style="white")
+                            error_msg.append("'Yes, continue'", style="bold green")
+                            error_msg.append("를 선택하세요\n", style="white")
+                            error_msg.append("3. 그 후 ", style="white")
+                            error_msg.append("ccu", style="bold green")
+                            error_msg.append("를 다시 실행하세요\n\n", style="white")
+                            error_msg.append("또는:\n", style="bold cyan")
+                            error_msg.append("신뢰된 프로젝트 폴더로 이동한 후 ccu를 실행하세요\n", style="white")
+                            error_msg.append("예: ", style="dim")
+                            error_msg.append("cd ~/projects/my-project && ccu", style="bold dim")
+
+                            console.print(Panel(error_msg, border_style="yellow", title="[bold yellow]폴더 권한 필요[/bold yellow]"))
+                            console.print(f"\n[dim]Debug file: {limits.get('debug_file', 'N/A')}[/dim]")
+                            return
+                    elif limits and "error" not in limits:
                         try:
                             save_limits_snapshot(
                                 session_pct=limits["session_pct"],

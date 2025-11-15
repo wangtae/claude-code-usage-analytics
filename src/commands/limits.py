@@ -167,6 +167,14 @@ def capture_limits() -> dict | None:
             f.write(f"week_match: {week_match.groups() if week_match else None}\n")
             f.write(f"opus_match: {opus_match.groups() if opus_match else None}\n")
 
+        # Check if Claude Code returned an error (untrusted folder)
+        if 'Error: Failed to load usage data' in clean_output:
+            return {
+                "error": "untrusted_folder",
+                "message": "Claude Code cannot load usage data in untrusted folder",
+                "debug_file": debug_file.name
+            }
+
         # If parsing failed, return error with debug file path
         if not (session_match and week_match and opus_match):
             return {
