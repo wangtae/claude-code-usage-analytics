@@ -1407,7 +1407,43 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 # Save limits if capture completed successfully
                 if limits_result['completed']:
                     limits = limits_result['data']
-                    if limits and "error" not in limits:
+                    if limits and "error" in limits:
+                        from rich.panel import Panel
+                        from rich.text import Text
+
+                        # Check if it's an untrusted folder error
+                        if limits.get("error") == "untrusted_folder":
+                            console.clear()
+
+                            error_msg = Text()
+                            error_msg.append("⚠️  ", style="bold yellow")
+                            error_msg.append("Claude Code가 신뢰하지 않는 폴더에서 실행됨\n\n", style="bold yellow")
+                            error_msg.append("ccu가 Usage Limits 데이터를 가져오려면 Claude Code가 현재 폴더를 신뢰해야 합니다.\n\n", style="white")
+                            error_msg.append("해결 방법:\n", style="bold cyan")
+                            error_msg.append("1. 터미널에서 ", style="white")
+                            error_msg.append("claude", style="bold green")
+                            error_msg.append(" 명령어를 먼저 실행하세요\n", style="white")
+                            error_msg.append("2. Claude Code가 현재 폴더에 대한 권한을 요청하면 ", style="white")
+                            error_msg.append("'Yes, continue'", style="bold green")
+                            error_msg.append("를 선택하세요\n", style="white")
+                            error_msg.append("3. 그 후 ", style="white")
+                            error_msg.append("ccu", style="bold green")
+                            error_msg.append("를 다시 실행하세요\n\n", style="white")
+                            error_msg.append("또는:\n", style="bold cyan")
+                            error_msg.append("신뢰된 프로젝트 폴더로 이동한 후 ccu를 실행하세요\n", style="white")
+                            error_msg.append("예: ", style="dim")
+                            error_msg.append("cd ~/projects/my-project && ccu", style="bold dim")
+
+                            console.print(Panel(error_msg, border_style="yellow", title="[bold yellow]폴더 권한 필요[/bold yellow]"))
+                            console.print(f"\n[dim]Debug file: {limits.get('debug_file', 'N/A')}[/dim]")
+                            return
+
+                        # Check if it's a Claude server error (temporary)
+                        elif limits.get("error") == "claude_server_error":
+                            # Don't show fullscreen error, just keep error in limits
+                            # Footer will display the error status
+                            pass
+                    elif limits and "error" not in limits:
                         try:
                             save_limits_snapshot(
                                 session_pct=limits["session_pct"],
@@ -1508,7 +1544,63 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
             if week_reset_date:
                 # Apply offset for week navigation
                 adjusted_week_reset_date = week_reset_date - timedelta(weeks=-time_offset)
-                display_records = _filter_records_by_week(all_records, adjusted_week_reset_date)
+
+                # Weekly view needs to include data from ALL three reset periods:
+                # - Session reset (today midnight)
+                # - Week reset (all models)
+                # - Opus reset (may be different from week reset)
+                # Find the earliest reset time to ensure all data is included
+                from src.config.reset_times import get_week_start_datetime
+                from datetime import timezone as dt_timezone
+
+                # Ensure adjusted_week_reset_date is timezone-aware (UTC)
+                if adjusted_week_reset_date.tzinfo is None:
+                    adjusted_week_reset_date = adjusted_week_reset_date.replace(tzinfo=dt_timezone.utc)
+                else:
+                    adjusted_week_reset_date = adjusted_week_reset_date.astimezone(dt_timezone.utc)
+
+                earliest_week_start = adjusted_week_reset_date - timedelta(days=7)
+
+                # Check opus reset week start
+                try:
+                    opus_week_start_dt = get_week_start_datetime("opus_reset")
+                    if opus_week_start_dt:
+                        opus_week_start_utc = opus_week_start_dt.astimezone(dt_timezone.utc)
+                        if opus_week_start_utc < earliest_week_start:
+                            earliest_week_start = opus_week_start_utc
+                except Exception:
+                    pass
+
+                # Check session reset (today midnight)
+                try:
+                    from src.utils.timezone import get_local_timezone
+                    tz = get_local_timezone()
+                    today_midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_midnight_utc = today_midnight.astimezone(dt_timezone.utc)
+                    if today_midnight_utc < earliest_week_start:
+                        earliest_week_start = today_midnight_utc
+                except Exception:
+                    pass
+
+                # Filter records from earliest reset time to week_reset_date
+                week_end = adjusted_week_reset_date
+                filtered = []
+                for record in all_records:
+                    try:
+                        if hasattr(record, 'timestamp') and record.timestamp:
+                            record_dt = record.timestamp
+                            if record_dt.tzinfo is None:
+                                record_dt = record_dt.replace(tzinfo=dt_timezone.utc)
+                            else:
+                                record_dt = record_dt.astimezone(dt_timezone.utc)
+
+                            # Include records from earliest_week_start to week_end
+                            if earliest_week_start <= record_dt < week_end:
+                                filtered.append(record)
+                    except (ValueError, AttributeError):
+                        continue
+
+                display_records = filtered
 
                 # Calculate week range for display (with time boundaries)
                 week_start_datetime = adjusted_week_reset_date - timedelta(days=7)

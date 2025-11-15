@@ -707,7 +707,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
         limits_data = _load_limits_data()
         _display_heatmap(console, stats, limits_data, year=target_year)
         # Show footer with keyboard shortcuts
-        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
         console.print()
         console.print(footer, end="")
         return
@@ -780,7 +780,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
         render_device_statistics(console, week_offset=device_week_offset, display_period=device_display_period)
         # Show footer with keyboard shortcuts and calculated date range
-        footer = _create_footer(devices_date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(devices_date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
         console.print()
         console.print(footer, end="")
         return
@@ -865,9 +865,9 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
             opus_reset = format_reset_date(limits['opus_reset'])
 
             # Calculate costs for each limit period (based on reset times)
-            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
-            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            session_stats = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
             today_cost = _calculate_today_cost(records)
 
             # Calculate recommended usage percentages
@@ -919,7 +919,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(session_bar)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -940,7 +947,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(week_bar)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -961,7 +975,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -986,7 +1007,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -1010,7 +1038,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -1034,7 +1069,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -1056,7 +1098,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(session_bar)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -1077,7 +1126,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
                 limits_table.add_row(week_bar)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -1098,7 +1154,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(opus_bar)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -1128,7 +1191,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(session_bar)
                 bar_text.append(f"  {limits['session_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Week limit (3 rows)
@@ -1152,7 +1222,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 bar_text.append(week_bar)
                 bar_text.append(f"  {limits['week_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
-                limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                if view_mode == "weekly":
+                    io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                    cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                else:
+                    # Usage mode: cost only
+                    limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
                 # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -1176,7 +1253,14 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
                 if limits["opus_pct"] > 0:
-                    limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                    # Weekly mode: show detailed token info with cache
+                    if view_mode == "weekly":
+                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                    else:
+                        # Usage mode: cost only
+                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -1187,7 +1271,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 )
 
         # Create footer
-        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+        footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
 
         # Group everything together and print once
         final_output = RichGroup(
@@ -1208,7 +1292,7 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
         hourly_detail_hour = view_mode_ref.get("hourly_detail_hour")
 
     # Create footer with export info, date range, and view mode
-    footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref)
+    footer = _create_footer(date_range, fast_mode=fast_mode, view_mode=view_mode, in_live_mode=True, is_updating=is_updating, view_mode_ref=view_mode_ref, limits_from_db=limits_from_db)
 
     # Create breakdowns for each view mode
     sections_to_render = []
@@ -1380,9 +1464,9 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
     console.print(footer, end="")
 
 
-def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str = None) -> float:
+def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str = None) -> dict:
     """
-    Calculate cost for current session period (since last session reset, all models).
+    Calculate cost and tokens for current session period (since last session reset, all models).
 
     Args:
         records: List of usage records
@@ -1390,7 +1474,7 @@ def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str =
                           If None, falls back to last 5 hours
 
     Returns:
-        Total cost for session period
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
@@ -1425,6 +1509,11 @@ def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str =
         session_start = now - timedelta(hours=5)
 
     session_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
         if record.timestamp >= session_start and record.model and record.token_usage and record.model != "<synthetic>":
             cost = calculate_cost(
@@ -1435,13 +1524,23 @@ def _calculate_session_cost(records: list[UsageRecord], session_reset_str: str =
                 record.token_usage.cache_read_tokens,
             )
             session_cost += cost
+            input_tokens += record.token_usage.input_tokens
+            output_tokens += record.token_usage.output_tokens
+            cache_creation_tokens += record.token_usage.cache_creation_tokens
+            cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return session_cost
+    return {
+        "cost": session_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
 
 
-def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: str = None) -> float:
+def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: str = None) -> dict:
     """
-    Calculate cost for current week period (since week reset, all models for "all models" quota).
+    Calculate cost and tokens for current week period (since week reset, all models for "all models" quota).
 
     Note: Despite the function name, this calculates ALL models cost for the weekly quota,
     not just sonnet. The name is kept for backward compatibility.
@@ -1452,11 +1551,7 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
                        If None, falls back to stored reset time or last 7 days
 
     Returns:
-        Total cost for weekly period (all models)
-
-    Note: If using stored reset time, this function loads all recent records (30 days)
-    to ensure accurate cost calculation across the full weekly period, even if the
-    provided records list is filtered to a different time range.
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
@@ -1472,11 +1567,7 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
             # Convert to UTC for comparison with records
             week_start = week_start_dt.astimezone(timezone.utc)
             use_stored_time = True
-
-            # Load full recent records (30 days) to ensure we have all data
-            # The provided records might be filtered by view mode (e.g., weekly view)
-            from src.storage.snapshot_db import load_recent_usage_records
-            records = load_recent_usage_records(include_previous_days=30)
+            # Use the provided records as-is (already contains full history in weekly view)
     except Exception:
         pass
 
@@ -1574,6 +1665,11 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
         week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
         if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
             # Calculate cost for ALL models (not just sonnet)
@@ -1585,13 +1681,23 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
                 record.token_usage.cache_read_tokens,
             )
             weekly_cost += cost
+            input_tokens += record.token_usage.input_tokens
+            output_tokens += record.token_usage.output_tokens
+            cache_creation_tokens += record.token_usage.cache_creation_tokens
+            cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return weekly_cost
+    return {
+        "cost": weekly_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
 
 
-def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> float:
+def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> dict:
     """
-    Calculate cost for current Opus week period (since opus reset, opus models only).
+    Calculate cost and tokens for current Opus week period (since opus reset, opus models only).
 
     Args:
         records: List of usage records (may be filtered by view mode)
@@ -1599,11 +1705,7 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
                        If None, falls back to stored reset time or last 7 days
 
     Returns:
-        Total cost for opus weekly period
-
-    Note: If using stored reset time, this function loads all recent records (30 days)
-    to ensure accurate cost calculation across the full weekly period, even if the
-    provided records list is filtered to a different time range.
+        Dictionary with cost and token info: {"cost": float, "input_tokens": int, "output_tokens": int, "cache_creation_tokens": int, "cache_read_tokens": int}
     """
     from src.models.pricing import calculate_cost
     from datetime import timedelta, timezone
@@ -1619,11 +1721,7 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
             # Convert to UTC for comparison with records
             week_start = week_start_dt.astimezone(timezone.utc)
             use_stored_time = True
-
-            # Load full recent records (30 days) to ensure we have all data
-            # The provided records might be filtered by view mode (e.g., weekly view)
-            from src.storage.snapshot_db import load_recent_usage_records
-            records = load_recent_usage_records(include_previous_days=30)
+            # Use the provided records as-is (already contains full history in weekly view)
     except Exception:
         pass
 
@@ -1721,6 +1819,11 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
         week_start = now - timedelta(days=7)
 
     weekly_cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
+
     for record in records:
         if record.timestamp >= week_start and record.model and record.token_usage and record.model != "<synthetic>":
             # Check if it's an opus model
@@ -1733,8 +1836,18 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
                     record.token_usage.cache_read_tokens,
                 )
                 weekly_cost += cost
+                input_tokens += record.token_usage.input_tokens
+                output_tokens += record.token_usage.output_tokens
+                cache_creation_tokens += record.token_usage.cache_creation_tokens
+                cache_read_tokens += record.token_usage.cache_read_tokens
 
-    return weekly_cost
+    return {
+        "cost": weekly_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens
+    }
 
 
 def _calculate_today_cost(records: list[UsageRecord]) -> float:
@@ -1985,9 +2098,9 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
 
             # Calculate costs for each limit period (based on reset times)
             from datetime import timedelta
-            session_cost = _calculate_session_cost(records, limits.get('session_reset'))
-            weekly_sonnet_cost = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
-            weekly_opus_cost = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            session_stats = _calculate_session_cost(records, limits.get('session_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
+            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
             today_cost = _calculate_today_cost(records)
 
             # Get color mode and colors from view_mode_ref
@@ -2043,7 +2156,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
                 session_bar = _create_usage_bar_with_percent(limits["session_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
             limits_table.add_row(session_bar)
-            limits_table.add_row(f"Resets {session_reset} ({format_cost(session_cost)})", style=DIM)
+            # Weekly mode: show detailed token info with cache
+            session_io_str = f"{_format_number(session_stats['input_tokens'])}I / {_format_number(session_stats['output_tokens'])}O"
+            session_cache_str = f"{_format_number(session_stats['cache_creation_tokens'])}W / {_format_number(session_stats['cache_read_tokens'])}R"
+            limits_table.add_row(f"Resets {session_reset} ({format_cost(session_stats['cost'])}) [{session_io_str}] (C:{session_cache_str})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Week limit (3 rows)
@@ -2061,7 +2177,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
                 week_bar = _create_usage_bar_with_percent(limits["week_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
             limits_table.add_row(week_bar)
-            limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_cost)})", style=DIM)
+            # Weekly mode: show detailed token info with cache
+            week_io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+            week_cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+            limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{week_io_str}] (C:{week_cache_str})", style=DIM)
             limits_table.add_row("")  # Blank line
 
             # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
@@ -2082,7 +2201,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             limits_table.add_row(opus_bar)
             # Only show reset info if usage > 0%
             if limits["opus_pct"] > 0:
-                limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_cost)})", style=DIM)
+                # Weekly mode: show detailed token info with cache
+                opus_io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
+                opus_cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
+                limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{opus_io_str}] (C:{opus_cache_str})", style=DIM)
 
             # Wrap in outer "Usage Limits" panel (expand to fit terminal width)
             limits_outer_panel = Panel(
@@ -3948,7 +4070,7 @@ def _create_message_detail_view(records: list[UsageRecord], target_date: str, ta
     return Group(panel)
 
 
-def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: str = "monthly", in_live_mode: bool = False, is_updating: bool = False, view_mode_ref: dict | None = None) -> Text:
+def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: str = "monthly", in_live_mode: bool = False, is_updating: bool = False, view_mode_ref: dict | None = None, limits_from_db: dict | None = None) -> Text:
     """
     Create footer with export command info, date range, and view mode.
 
@@ -3959,6 +4081,7 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
         in_live_mode: If True, show keyboard shortcuts for mode switching
         is_updating: If True, show updating spinner instead of last update time
         view_mode_ref: Reference dict for view mode state (includes usage_display_mode)
+        limits_from_db: Limits data (may contain error info)
 
     Returns:
         Text with export instructions, date range, and view mode info
@@ -4366,6 +4489,40 @@ def _create_footer(date_range: str = None, fast_mode: bool = False, view_mode: s
             footer.append("Data range: ", style=DIM)
             footer.append(f"{date_range}", style="bold cyan")
             footer.append("\n", style=DIM)
+
+    # Add error/warning status at the bottom (in both live and non-live modes)
+    warnings = []
+
+    # Check for Claude Code usage query error
+    if limits_from_db and limits_from_db.get("error") == "claude_server_error":
+        warnings.append(("⚠️  Claude Code Usage 쿼리 실패 (서버/네트워크 문제)", "bold yellow"))
+
+    # Check for Gist sync status (only in live mode)
+    if in_live_mode and view_mode_ref and view_mode_ref.get('sync_status'):
+        sync_status = view_mode_ref['sync_status']
+
+        # Check if sync failed
+        if sync_status.get('error'):
+            warnings.append(("⚠️  Gist 동기화 실패", "bold red"))
+        # Check if auto-sync enabled but never synced
+        elif not sync_status.get('last_sync') and not sync_status.get('is_syncing'):
+            # Check if auto-sync is enabled
+            from src.storage.snapshot_db import get_user_preferences
+            prefs = get_user_preferences()
+            if prefs and prefs.get('gist_auto_sync') == '1':
+                warnings.append(("⚠️  Gist 미동기화", "bold yellow"))
+
+    # Display all warnings
+    if warnings:
+        footer.append("\n", style=DIM)
+        footer.append("─" * 80, style=DIM)
+        footer.append("\n", style=DIM)
+        for warning_text, warning_style in warnings:
+            footer.append(warning_text, style=warning_style)
+            footer.append(" │ ", style=DIM)
+        # Remove last separator
+        if footer.plain[-3:] == " │ ":
+            footer = Text(footer.plain[:-3], style=footer.style)
 
     return footer
 
