@@ -154,12 +154,13 @@ def capture_limits() -> dict | None:
         debug_file.close()
 
         # Parse for percentages and reset times
-        session_match = re.search(r'Current session.*?(\d+)%\s+used.*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
-        week_match = re.search(r'Current week \(all models\).*?(\d+)%\s+used.*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
-        opus_match = re.search(r'Current week \(Opus\).*?(\d+)%\s+used', clean_output, re.DOTALL)
+        # Support both "used" and "left" formats (Claude Code v2.0.50+ uses "left")
+        session_match = re.search(r'Current session.*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
+        week_match = re.search(r'Current week \(all models\).*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
+        opus_match = re.search(r'Current week \(Opus\).*?(\d+)%\s+(used|left)', clean_output, re.DOTALL)
 
         # For Opus reset time: try to find "Resets" info, fallback to week reset if 0%
-        opus_reset_match = re.search(r'Current week \(Opus\).*?(\d+)%\s+used.*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
+        opus_reset_match = re.search(r'Current week \(Opus\).*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
 
         # Debug: Write match results
         with open(debug_file.name, 'a') as f:
@@ -196,12 +197,13 @@ def capture_limits() -> dict | None:
 
         if session_match and week_match and opus_match:
             # Clean reset strings (remove \r and extra whitespace)
-            session_reset = session_match.group(2).strip().replace('\r', '')
-            week_reset = week_match.group(2).strip().replace('\r', '')
+            # Note: group(3) is reset time (group(2) is now "used" or "left")
+            session_reset = session_match.group(3).strip().replace('\r', '')
+            week_reset = week_match.group(3).strip().replace('\r', '')
 
             # If Opus has reset info, use it; otherwise use week reset (when Opus is 0%)
             if opus_reset_match:
-                opus_reset = opus_reset_match.group(2).strip().replace('\r', '')
+                opus_reset = opus_reset_match.group(3).strip().replace('\r', '')
             else:
                 # Opus is 0%, use week reset time
                 opus_reset = week_reset
@@ -233,10 +235,25 @@ def capture_limits() -> dict | None:
                 # Fall back to parsed values
                 pass
 
+            # Convert percentages to "used" basis
+            # If Claude shows "X% left", convert to "used" (100 - X)
+            # If Claude shows "X% used", use as-is
+            session_pct = int(session_match.group(1))
+            if session_match.group(2) == "left":
+                session_pct = 100 - session_pct
+
+            week_pct = int(week_match.group(1))
+            if week_match.group(2) == "left":
+                week_pct = 100 - week_pct
+
+            opus_pct = int(opus_match.group(1))
+            if opus_match.group(2) == "left":
+                opus_pct = 100 - opus_pct
+
             return {
-                "session_pct": int(session_match.group(1)),
-                "week_pct": int(week_match.group(1)),
-                "opus_pct": int(opus_match.group(1)),
+                "session_pct": session_pct,
+                "week_pct": week_pct,
+                "opus_pct": opus_pct,
                 "session_reset": session_reset,
                 "week_reset": week_reset,
                 "opus_reset": opus_reset,
