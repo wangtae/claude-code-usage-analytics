@@ -34,7 +34,7 @@ def get_default_reset_times() -> dict:
             "timezone": None,
             "full_string": None,
         },
-        "opus_reset": {
+        "sonnet_reset": {
             "date": None,
             "time": None,
             "timezone": None,
@@ -220,16 +220,16 @@ def parse_reset_string(reset_str: str, current_tz: str = "UTC") -> dict:
 
 def update_reset_time(reset_type: str, new_reset_str: str, current_tz: str = "UTC") -> None:
     """
-    Update a specific reset time (session, week, or opus) with new data.
+    Update a specific reset time (session, week, or sonnet) with new data.
 
     Only updates fields that are present in the new string (incremental update).
 
     Args:
-        reset_type: One of "session_reset", "week_reset", "opus_reset"
+        reset_type: One of "session_reset", "week_reset", "sonnet_reset"
         new_reset_str: New reset time string from claude /usage
         current_tz: Current timezone to use if not specified in string
     """
-    if reset_type not in ["session_reset", "week_reset", "opus_reset"]:
+    if reset_type not in ["session_reset", "week_reset", "sonnet_reset"]:
         raise ValueError(f"Invalid reset_type: {reset_type}")
 
     # Load existing reset times
@@ -266,7 +266,7 @@ def get_reset_datetime(reset_type: str) -> Optional[datetime]:
     Get the reset datetime as a timezone-aware datetime object.
 
     Args:
-        reset_type: One of "session_reset", "week_reset", "opus_reset"
+        reset_type: One of "session_reset", "week_reset", "sonnet_reset"
 
     Returns:
         Timezone-aware datetime object, or None if not enough info
@@ -304,7 +304,7 @@ def get_week_start_datetime(reset_type: str) -> Optional[datetime]:
     To find when the current week started, we need to go back 7 days from the next reset.
 
     Args:
-        reset_type: One of "week_reset", "opus_reset"
+        reset_type: One of "week_reset", "sonnet_reset"
 
     Returns:
         Timezone-aware datetime object for week start, or None if not available
@@ -350,7 +350,7 @@ def format_reset_for_display(reset_type: str) -> str:
     Format reset time for display in dashboard.
 
     Args:
-        reset_type: One of "session_reset", "week_reset", "opus_reset"
+        reset_type: One of "session_reset", "week_reset", "sonnet_reset"
 
     Returns:
         Formatted string like "Oct 27, 9:59am (Asia/Seoul)" or "Not available"

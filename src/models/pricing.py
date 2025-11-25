@@ -118,8 +118,17 @@ def get_model_pricing(model_id: str) -> ModelPricing:
     for cached_model_id, pricing in _PRICING_CACHE.items():
         cached_lower = cached_model_id.lower()
 
-        # Match by model family
-        if "opus-4" in model_lower and "opus-4" in cached_lower:
+        # Match by model family (most specific first)
+        if "opus-4-5" in model_lower or "opus-4.5" in model_lower:
+            if "opus-4-5" in cached_lower or "opus-4.5" in cached_lower:
+                return ModelPricing(
+                    input_price=pricing['input_price'],
+                    output_price=pricing['output_price'],
+                    cache_write_price=pricing['cache_write_price'],
+                    cache_read_price=pricing['cache_read_price'],
+                    model_name="Opus 4.5",
+                )
+        elif "opus-4" in model_lower and "opus-4" in cached_lower:
             return ModelPricing(
                 input_price=pricing['input_price'],
                 output_price=pricing['output_price'],
@@ -144,6 +153,15 @@ def get_model_pricing(model_id: str) -> ModelPricing:
                 cache_read_price=pricing['cache_read_price'],
                 model_name="Sonnet 4",
             )
+        elif "haiku-4-5" in model_lower or "haiku-4.5" in model_lower:
+            if "haiku-4-5" in cached_lower or "haiku-4.5" in cached_lower:
+                return ModelPricing(
+                    input_price=pricing['input_price'],
+                    output_price=pricing['output_price'],
+                    cache_write_price=pricing['cache_write_price'],
+                    cache_read_price=pricing['cache_read_price'],
+                    model_name="Haiku 4.5",
+                )
         elif ("haiku-3-5" in model_lower or "haiku-3.5" in model_lower):
             if "haiku-3-5" in cached_lower or "haiku-3.5" in cached_lower:
                 return ModelPricing(
@@ -168,12 +186,16 @@ def _get_display_name(model_id: str) -> str:
     """Get display name for a model ID."""
     model_lower = model_id.lower()
 
-    if "opus-4" in model_lower:
+    if "opus-4-5" in model_lower or "opus-4.5" in model_lower:
+        return "Opus 4.5"
+    elif "opus-4" in model_lower:
         return "Opus 4"
     elif "sonnet-4-5" in model_lower or "sonnet-4.5" in model_lower:
         return "Sonnet 4.5"
     elif "sonnet-4" in model_lower:
         return "Sonnet 4"
+    elif "haiku-4-5" in model_lower or "haiku-4.5" in model_lower:
+        return "Haiku 4.5"
     elif "haiku-3-5" in model_lower or "haiku-3.5" in model_lower:
         return "Haiku 3.5"
     else:

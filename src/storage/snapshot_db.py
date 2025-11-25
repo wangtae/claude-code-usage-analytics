@@ -1424,10 +1424,10 @@ def init_database(db_path: Path = DEFAULT_DB_PATH) -> None:
                 date TEXT NOT NULL,
                 session_pct INTEGER,
                 week_pct INTEGER,
-                opus_pct INTEGER,
+                sonnet_pct INTEGER,
                 session_reset TEXT,
                 week_reset TEXT,
-                opus_reset TEXT
+                sonnet_reset TEXT
             )
         """)
 
@@ -1659,6 +1659,52 @@ def init_database(db_path: Path = DEFAULT_DB_PATH) -> None:
                 pricing_info.get('notes', '')
             ))
 
+        # Migration: Rename opus_pct/opus_reset to sonnet_pct/sonnet_reset
+        # Check if old columns exist
+        try:
+            cursor.execute("PRAGMA table_info(limits_snapshots)")
+            columns = [row[1] for row in cursor.fetchall()]
+
+            if 'opus_pct' in columns:
+                # Create new table with correct schema
+                cursor.execute("""
+                    CREATE TABLE limits_snapshots_new (
+                        timestamp TEXT PRIMARY KEY,
+                        date TEXT NOT NULL,
+                        session_pct INTEGER,
+                        week_pct INTEGER,
+                        sonnet_pct INTEGER,
+                        session_reset TEXT,
+                        week_reset TEXT,
+                        sonnet_reset TEXT
+                    )
+                """)
+
+                # Copy data from old table (opus_pct -> sonnet_pct, opus_reset -> sonnet_reset)
+                cursor.execute("""
+                    INSERT INTO limits_snapshots_new
+                    SELECT timestamp, date, session_pct, week_pct,
+                           opus_pct as sonnet_pct,
+                           session_reset, week_reset,
+                           opus_reset as sonnet_reset
+                    FROM limits_snapshots
+                """)
+
+                # Drop old table
+                cursor.execute("DROP TABLE limits_snapshots")
+
+                # Rename new table
+                cursor.execute("ALTER TABLE limits_snapshots_new RENAME TO limits_snapshots")
+
+                # Recreate index
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_limits_snapshots_date
+                    ON limits_snapshots(date)
+                """)
+        except Exception:
+            # If migration fails, table might already be migrated or doesn't exist
+            pass
+
         conn.commit()
     finally:
         conn.close()
@@ -1863,10 +1909,10 @@ def save_snapshot(records: list[UsageRecord], db_path: Path = DEFAULT_DB_PATH) -
 def save_limits_snapshot(
     session_pct: int,
     week_pct: int,
-    opus_pct: int,
+    sonnet_pct: int,
     session_reset: str,
     week_reset: str,
-    opus_reset: str,
+    sonnet_reset: str,
     db_path: Path = DEFAULT_DB_PATH
 ) -> None:
     """
@@ -1875,10 +1921,10 @@ def save_limits_snapshot(
     Args:
         session_pct: Session usage percentage
         week_pct: Week (all models) usage percentage
-        opus_pct: Opus usage percentage
+        sonnet_pct: Sonnet usage percentage
         session_reset: Session reset time
         week_reset: Week reset time (e.g., "Oct 17, 10am (Asia/Seoul)" or "9:59am (Asia/Seoul)")
-        opus_reset: Opus reset time
+        sonnet_reset: Opus reset time
         db_path: Path to the SQLite database file
 
     Raises:
@@ -1895,18 +1941,18 @@ def save_limits_snapshot(
 
         cursor.execute("""
             INSERT OR REPLACE INTO limits_snapshots (
-                timestamp, date, session_pct, week_pct, opus_pct,
-                session_reset, week_reset, opus_reset
+                timestamp, date, session_pct, week_pct, sonnet_pct,
+                session_reset, week_reset, sonnet_reset
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp,
             date,
             session_pct,
             week_pct,
-            opus_pct,
+            sonnet_pct,
             session_reset,
             week_reset,
-            opus_reset,
+            sonnet_reset,
         ))
 
         # Save week_reset pattern to user_preferences for persistent storage
@@ -2532,7 +2578,7 @@ def get_limits_data(db_path: Path = DEFAULT_DB_PATH) -> dict[str, dict[str, int]
 
     Returns a dictionary mapping dates to their max limits:
     {
-        "2025-10-11": {"week_pct": 14, "opus_pct": 8},
+        "2025-10-11": {"week_pct": 14, "sonnet_pct": 8},
         ...
     }
 
@@ -2540,7 +2586,7 @@ def get_limits_data(db_path: Path = DEFAULT_DB_PATH) -> dict[str, dict[str, int]
         db_path: Path to the SQLite database file
 
     Returns:
-        Dictionary mapping dates to max week_pct and opus_pct for that day
+        Dictionary mapping dates to max week_pct and sonnet_pct for that day
     """
     if not db_path.exists():
         return {}
@@ -2550,12 +2596,12 @@ def get_limits_data(db_path: Path = DEFAULT_DB_PATH) -> dict[str, dict[str, int]
     try:
         cursor = conn.cursor()
 
-        # Get max week_pct and opus_pct per day
+        # Get max week_pct and sonnet_pct per day
         cursor.execute("""
             SELECT
                 date,
                 MAX(week_pct) as max_week,
-                MAX(opus_pct) as max_opus
+                MAX(sonnet_pct) as max_opus
             FROM limits_snapshots
             GROUP BY date
             ORDER BY date
@@ -2564,7 +2610,7 @@ def get_limits_data(db_path: Path = DEFAULT_DB_PATH) -> dict[str, dict[str, int]
         return {
             row[0]: {
                 "week_pct": row[1] or 0,
-                "opus_pct": row[2] or 0
+                "sonnet_pct": row[2] or 0
             }
             for row in cursor.fetchall()
         }
@@ -2580,10 +2626,10 @@ def get_latest_limits(db_path: Path = DEFAULT_DB_PATH) -> dict | None:
     {
         "session_pct": 14,
         "week_pct": 18,
-        "opus_pct": 8,
+        "sonnet_pct": 8,
         "session_reset": "Oct 16, 10:59am (Europe/Brussels)",
         "week_reset": "Oct 18, 3pm (Europe/Brussels)",
-        "opus_reset": "Oct 18, 3pm (Europe/Brussels)",
+        "sonnet_reset": "Oct 18, 3pm (Europe/Brussels)",
     }
 
     Args:
@@ -2602,8 +2648,8 @@ def get_latest_limits(db_path: Path = DEFAULT_DB_PATH) -> dict | None:
 
         # Get most recent limits snapshot
         cursor.execute("""
-            SELECT session_pct, week_pct, opus_pct,
-                   session_reset, week_reset, opus_reset
+            SELECT session_pct, week_pct, sonnet_pct,
+                   session_reset, week_reset, sonnet_reset
             FROM limits_snapshots
             ORDER BY timestamp DESC
             LIMIT 1
@@ -2616,10 +2662,10 @@ def get_latest_limits(db_path: Path = DEFAULT_DB_PATH) -> dict | None:
         return {
             "session_pct": row[0] or 0,
             "week_pct": row[1] or 0,
-            "opus_pct": row[2] or 0,
+            "sonnet_pct": row[2] or 0,
             "session_reset": row[3] or "",
             "week_reset": row[4] or "",
-            "opus_reset": row[5] or "",
+            "sonnet_reset": row[5] or "",
         }
     finally:
         conn.close()

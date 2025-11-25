@@ -21,7 +21,7 @@ def run(console: Console, year: Optional[int] = None, fast: bool = False) -> Non
     """
     Display GitHub-style activity heatmap in the terminal.
 
-    Shows 3 heatmaps: token usage, week limit %, and opus limit %
+    Shows 3 heatmaps: token usage, week limit %, and sonnet limit %
     with the same visual design as PNG export but rendered directly
     in the terminal using Unicode block characters and colors.
 
@@ -98,7 +98,7 @@ def _display_heatmap(console: Console, stats, limits_data: dict, year: Optional[
     Args:
         console: Rich console for output
         stats: Aggregated statistics
-        limits_data: Dictionary mapping dates to week_pct and opus_pct
+        limits_data: Dictionary mapping dates to week_pct and sonnet_pct
         year: Year to display (defaults to current year)
     """
     # Determine year
@@ -247,27 +247,27 @@ def _display_heatmap(console: Console, stats, limits_data: dict, year: Optional[
     ]
     week_panel = create_single_heatmap_panel("Week Limit %", week_color_func, week_legend_colors, "0%", "100%+")
 
-    # 3. Opus Limit % heatmap (green → red gradient)
-    def opus_color_func(day_stats, date):
+    # 3. Sonnet Limit % heatmap (green → red gradient)
+    def sonnet_color_func(day_stats, date):
         date_key = date.strftime("%Y-%m-%d")
-        opus_pct = limits_data.get(date_key, {}).get("opus_pct", None)  # None for no data
-        return _get_limits_style(opus_pct, (93, 203, 123), date, today)
+        sonnet_pct = limits_data.get(date_key, {}).get("sonnet_pct", None)  # None for no data
+        return _get_limits_style(sonnet_pct, (93, 203, 123), date, today)
 
     # Legend: green → red → dark red
-    opus_legend_colors = [
+    sonnet_legend_colors = [
         "#5DCB7B",  # Green (0%)
         "#A36B99",  # 33%
         "#CB5D5D",  # Red (100%)
         "#782850",  # Dark red (>100%)
     ]
-    opus_panel = create_single_heatmap_panel("Opus Limit %", opus_color_func, opus_legend_colors, "0%", "100%+")
+    sonnet_panel = create_single_heatmap_panel("Sonnet Limit %", sonnet_color_func, sonnet_legend_colors, "0%", "100%+")
 
     # Display all 3 panels
     console.print(token_panel, end="")
     console.print()
     console.print(week_panel, end="")
     console.print()
-    console.print(opus_panel, end="")
+    console.print(sonnet_panel, end="")
     console.print()
 
     # Summary stats
@@ -283,7 +283,7 @@ def _load_limits_data() -> dict:
     Load limits data from database.
 
     Returns:
-        Dictionary mapping dates to {"week_pct": int, "opus_pct": int}
+        Dictionary mapping dates to {"week_pct": int, "sonnet_pct": int}
     """
     from src.storage.snapshot_db import DEFAULT_DB_PATH
     import sqlite3
@@ -296,19 +296,19 @@ def _load_limits_data() -> dict:
 
         # Load limits snapshots (percentages are already calculated)
         cursor.execute("""
-            SELECT date, week_pct, opus_pct
+            SELECT date, week_pct, sonnet_pct
             FROM limits_snapshots
             ORDER BY timestamp DESC
         """)
 
         for row in cursor.fetchall():
-            date_str, week_pct, opus_pct = row
+            date_str, week_pct, sonnet_pct = row
 
             # Only keep the most recent snapshot for each date
             if date_str not in limits_data:
                 limits_data[date_str] = {
                     "week_pct": week_pct if week_pct is not None else 0,
-                    "opus_pct": opus_pct if opus_pct is not None else 0
+                    "sonnet_pct": sonnet_pct if sonnet_pct is not None else 0
                 }
 
         conn.close()
