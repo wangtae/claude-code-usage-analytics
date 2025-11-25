@@ -104,7 +104,8 @@ def capture_limits() -> dict | None:
 
                         # Check if we have complete data
                         # Look for the usage screen's exit message, not the loading screen's "esc to interrupt"
-                        if b'Current week (Sonnet)' in output and b'Esc to exit' in output:
+                        # Support both "Current week (Sonnet)" and "Current week (Sonnet only)"
+                        if b'Current week (Sonnet' in output and b'Esc to exit' in output:
                             # Wait a tiny bit more to ensure all data is flushed
                             time.sleep(0.2)
                             # Try to read any remaining data
@@ -157,10 +158,11 @@ def capture_limits() -> dict | None:
         # Support both "used" and "left" formats (Claude Code v2.0.50+ uses "left")
         session_match = re.search(r'Current session.*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
         week_match = re.search(r'Current week \(all models\).*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
-        sonnet_match = re.search(r'Current week \(Sonnet\).*?(\d+)%\s+(used|left)', clean_output, re.DOTALL)
+        # Support both "Current week (Sonnet)" and "Current week (Sonnet only)"
+        sonnet_match = re.search(r'Current week \(Sonnet(?: only)?\).*?(\d+)%\s+(used|left)', clean_output, re.DOTALL)
 
         # For Sonnet reset time: try to find "Resets" info, fallback to week reset if 0%
-        sonnet_reset_match = re.search(r'Current week \(Sonnet\).*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
+        sonnet_reset_match = re.search(r'Current week \(Sonnet(?: only)?\).*?(\d+)%\s+(used|left).*?Resets\s+(.+?)(?:\r?\n|$)', clean_output, re.DOTALL)
 
         # Debug: Write match results
         with open(debug_file.name, 'a') as f:
