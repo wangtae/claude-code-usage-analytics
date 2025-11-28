@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from src.config.user_config import get_machine_name, get_db_path
+from src.config.user_config import get_machine_name
 from src.sync.exceptions import ConflictError
 from src.sync.gist_client import GistClient
 from src.sync.json_export import export_to_json, export_to_json_chunked, get_last_export_date
@@ -159,15 +159,14 @@ class SyncManager:
             backup_created = self._create_backup(old_data_files[0], manifest)
             stats["backup_created"] = backup_created
 
-        # 8. Prepare files to upload
-        files_to_update = {}
-
+        # 8. Upload data files (one at a time to avoid API size limits)
+        # GitHub Gist API has request size limits, so we upload each chunk separately
+        uploaded_count = 0
         for suffix, export_data in chunked_exports.items():
             filename = f"{base_filename}{suffix}.json"
-            files_to_update[filename] = json.dumps(export_data, indent=2, ensure_ascii=False)
-
-        # Add manifest to upload
-        files_to_update[Manifest.FILENAME] = manifest.to_json()
+            file_content = json.dumps(export_data, indent=2, ensure_ascii=False)
+            self.client.update_gist(self.gist_id, {filename: file_content})
+            uploaded_count += 1
 
         # 9. Delete old files that are no longer needed
         # (e.g., when switching from single file to chunked)
@@ -175,13 +174,16 @@ class SyncManager:
         old_file_set = set(old_data_files) if old_data_files else set()
         files_to_delete = old_file_set - new_file_set
 
-        for old_file in files_to_delete:
-            files_to_update[old_file] = None  # None = delete file from Gist
+        if files_to_delete:
+            self.client.update_gist(
+                self.gist_id,
+                {old_file: None for old_file in files_to_delete}
+            )
 
-        # 10. Upload to Gist
-        self.client.update_gist(self.gist_id, files_to_update)
+        # 10. Upload manifest separately
+        self.client.update_gist(self.gist_id, {Manifest.FILENAME: manifest.to_json()})
         stats["manifest_updated"] = True
-        stats["files_uploaded"] = len(data_files)
+        stats["files_uploaded"] = uploaded_count
 
         if files_to_delete:
             stats["old_files_deleted"] = len(files_to_delete)
@@ -439,14 +441,10 @@ class SyncManager:
             export_date: Export timestamp
         """
         import sqlite3
-        from src.storage.snapshot_db import get_default_db_path
+        from src.sync.json_export import get_current_machine_db_path
 
-        # Use custom path if set, otherwise use auto-detected path
-        db_path_str = get_db_path()
-        if db_path_str:
-            db_path = Path(db_path_str)
-        else:
-            db_path = get_default_db_path()
+        # Use machine-specific database path (consistent with get_last_export_date)
+        db_path = get_current_machine_db_path()
         if not db_path.exists():
             return
 

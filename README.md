@@ -968,6 +968,11 @@ Projects are renamed to `project-001`, `project-002`, etc., ranked by total toke
 
 ## Changelog
 
+### v1.7.10 - Sync Metadata Fix (2025-11-28)
+- **Bug Fix**: Fixed sync metadata being written to wrong database path
+  - `_update_local_sync_metadata` now uses machine-specific database path
+  - Fixes "Last export: Never" showing even after successful push
+
 ### v1.7.9 - Disable Backup (2025-11-28)
 - **Breaking Change**: Backup disabled by default to save Gist space
   - `ccu gist push` no longer creates backups by default
