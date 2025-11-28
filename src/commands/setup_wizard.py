@@ -299,9 +299,12 @@ def _setup_gist_sync(console: Console) -> bool | None:
             console.print("[yellow]No token provided. Cannot proceed with Gist storage.[/yellow]")
             return None  # Return to storage selection
 
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         console.print("\nCancelled")
         return None
+    except KeyboardInterrupt:
+        # Ctrl+C pressed - propagate to exit immediately
+        raise
 
     # Validate token
     console.print("Validating token...", end="")
