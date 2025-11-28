@@ -173,6 +173,15 @@ def main() -> None:
             console = Console()
             console.print(f"[yellow]Setup wizard error (using defaults): {e}[/yellow]")
 
+        # Run migrations if needed (on version update)
+        try:
+            from src.migrations import run_migrations
+            migration_result = run_migrations(console=Console())
+            # Migrations output is handled inside run_migrations
+        except Exception as e:
+            console = Console()
+            console.print(f"[yellow]Migration warning: {e}[/yellow]")
+
         # Auto-backup on program start (silent, won't block execution)
         try:
             from src.utils.backup import auto_backup
