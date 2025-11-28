@@ -246,7 +246,16 @@ def get_last_export_date(db_path: Optional[Path] = None) -> Optional[str]:
         """)
 
         row = cursor.fetchone()
-        return row[0] if row else None
+        if not row:
+            return None
+
+        # Normalize to YYYY-MM-DD format for comparison with date column
+        # Handle both ISO format ("2024-11-28T10:30:00+00:00") and date-only format
+        date_value = row[0]
+        if date_value and len(date_value) > 10 and 'T' in date_value:
+            # ISO format - extract just the date part
+            return date_value[:10]
+        return date_value
 
     except sqlite3.OperationalError:
         # Table doesn't exist yet

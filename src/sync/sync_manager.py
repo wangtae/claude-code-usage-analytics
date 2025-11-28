@@ -86,12 +86,11 @@ class SyncManager:
         # 1. Export local data
         since_date = None if force else get_last_export_date()
 
-        # Get database path (convert to Path if string)
-        db_path_str = get_db_path()
-        db_path = Path(db_path_str) if db_path_str else None
-
+        # Use get_current_machine_db_path() to ensure we export from the correct
+        # per-machine database file (usage_history_{machine_name}.db)
+        # Note: export_to_json will use get_current_machine_db_path() when db_path is None
         export_data = export_to_json(
-            db_path=db_path,
+            db_path=None,  # Let export_to_json resolve the correct machine-specific path
             since_date=since_date,
             include_stats=True,
         )
@@ -407,11 +406,14 @@ class SyncManager:
                 )
             """)
 
-            # Update last export date
+            # Update last export date (store as YYYY-MM-DD for comparison with date column)
+            # export_date is ISO format like "2024-11-28T10:30:00+00:00"
+            # We extract just the date part for incremental export comparison
+            export_date_only = export_date[:10] if len(export_date) >= 10 else export_date
             cursor.execute("""
                 INSERT OR REPLACE INTO sync_metadata (key, value)
                 VALUES ('last_gist_export_date', ?)
-            """, (export_date,))
+            """, (export_date_only,))
 
             # Update Gist ID
             if self.gist_id:

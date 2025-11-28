@@ -141,6 +141,68 @@ def push(
 
         if stats.get("status") == "nothing_to_sync":
             console.print(" [yellow]Nothing to sync[/yellow]")
+
+            # Show diagnostic info to help debug sync issues
+            console.print("\n[dim]Diagnostic info:[/dim]")
+
+            from src.config.user_config import get_machine_name
+            from src.storage.snapshot_db import get_current_machine_db_path
+
+            # Export always uses get_current_machine_db_path() for correct per-machine path
+            actual_path = get_current_machine_db_path()
+
+            console.print(f"  Machine name: {get_machine_name()}")
+            console.print(f"  DB path: {actual_path}")
+            console.print(f"  DB file exists: {actual_path.exists()}")
+
+            if actual_path.exists():
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(actual_path, timeout=5.0)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM usage_records")
+                    record_count = cursor.fetchone()[0]
+                    conn.close()
+                    console.print(f"  Records in DB: {record_count:,}")
+
+                    if record_count == 0:
+                        console.print("\n[yellow]⚠ Database is empty. Run 'ccu' to populate data first.[/yellow]")
+                except Exception as e:
+                    console.print(f"  DB query error: {e}")
+
+            # Show last export date and explain incremental behavior
+            from src.sync.json_export import get_last_export_date
+            last_export = get_last_export_date()
+            console.print(f"  Last export date: {last_export or 'Never'}")
+
+            # Show additional context if DB has records but nothing to sync
+            if actual_path.exists():
+                try:
+                    conn = sqlite3.connect(actual_path, timeout=5.0)
+                    cursor = conn.cursor()
+
+                    # Check min/max dates in DB
+                    cursor.execute("SELECT MIN(date), MAX(date) FROM usage_records")
+                    date_range = cursor.fetchone()
+                    if date_range[0]:
+                        console.print(f"  Records date range: {date_range[0]} ~ {date_range[1]}")
+
+                    # If incremental export and last_export exists, show why nothing new
+                    if last_export and not export_all:
+                        cursor.execute("SELECT COUNT(*) FROM usage_records WHERE date >= ?", (last_export,))
+                        new_count = cursor.fetchone()[0]
+                        console.print(f"  Records since {last_export}: {new_count:,}")
+
+                    conn.close()
+                except Exception:
+                    pass
+
+            if last_export and not export_all:
+                console.print("\n[yellow]⚠ Incremental export found no new records since last sync.[/yellow]")
+                console.print("[dim]Tip: Use '--export-all' to force full export instead of incremental.[/dim]")
+            elif not actual_path.exists():
+                console.print("\n[yellow]⚠ Database file not found. Run 'ccu' first to create it.[/yellow]")
+
             return
 
         console.print(" [green]✓ Done[/green]")
