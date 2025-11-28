@@ -251,8 +251,8 @@ pipx ensurepath
 source ~/.bashrc
 
 # Clone and install
-git clone https://github.com/wangtae/claude-goblin-mod.git
-cd claude-goblin-mod
+git clone https://github.com/wangtae/claude-code-usage-analytics.git
+cd claude-code-usage-analytics
 pipx install -e .
 
 # Run from anywhere
@@ -288,8 +288,8 @@ pipx ensurepath
 source ~/.bashrc  # or restart terminal
 
 # Clone and install
-git clone https://github.com/wangtae/claude-goblin-mod.git
-cd claude-goblin-mod
+git clone https://github.com/wangtae/claude-code-usage-analytics.git
+cd claude-code-usage-analytics
 pipx install -e .
 
 # Now you can use ccu anywhere
@@ -300,7 +300,7 @@ ccu  # Works from any directory!
 - ✅ **Isolated environment** - No dependency conflicts with other Python packages
 - ✅ **Global access** - Use `ccu` from any directory without activating virtual environments
 - ✅ **Editable mode** - Source code changes are immediately reflected (perfect for development)
-- ✅ **Clean uninstall** - `pipx uninstall claude-goblin-mod` removes everything
+- ✅ **Clean uninstall** - `pipx uninstall claude-code-usage-analytics` removes everything
 - ✅ **Recommended by Python packaging community** for CLI tools
 - ✅ **Automatic security** - `keyring` included for secure GitHub token storage
 
@@ -310,8 +310,8 @@ For systems where pipx is not available or if you prefer pip:
 
 ```bash
 # Clone the repository
-git clone https://github.com/wangtae/claude-goblin-mod.git
-cd claude-goblin-mod
+git clone https://github.com/wangtae/claude-code-usage-analytics.git
+cd claude-code-usage-analytics
 
 # Install in editable mode (creates ccu command)
 pip install -e .
@@ -337,8 +337,8 @@ source ~/.bashrc
 For completely isolated installation:
 
 ```bash
-git clone https://github.com/wangtae/claude-goblin-mod.git
-cd claude-goblin-mod
+git clone https://github.com/wangtae/claude-code-usage-analytics.git
+cd claude-code-usage-analytics
 
 # Create and activate virtual environment
 python3 -m venv venv
@@ -359,8 +359,8 @@ ccu
 For quick testing without installation:
 
 ```bash
-git clone https://github.com/wangtae/claude-goblin-mod.git
-cd claude-goblin-mod
+git clone https://github.com/wangtae/claude-code-usage-analytics.git
+cd claude-code-usage-analytics
 
 # Install dependencies (includes keyring for secure token storage)
 pip install -r requirements.txt
@@ -590,7 +590,7 @@ graph TD
 | **JSONL logs** | `~/.claude/projects/*.jsonl` | Current 30-day usage from Claude Code |
 | **SQLite DB** | `~/.claude/usage/usage_history.db` | Historical data (default location) |
 | **SQLite DB** | `/mnt/d/OneDrive/.claude-goblin/usage_history.db` | OneDrive sync (auto-detected) |
-| **Config** | `~/.claude/goblin_config.json` | User configuration |
+| **Config** | `~/.claude/claude-goblin-mod/claude-goblin.json` | User configuration |
 
 ---
 
@@ -743,6 +743,8 @@ Parses Claude's `/usage` reset dates (e.g., "Oct 17, 10am (Asia/Seoul)") and fil
   - `rich` >= 13.7.0 - Terminal UI framework
   - `typer` >= 0.9.0 - CLI framework
   - `watchdog` >= 3.0.0 - File system monitoring
+  - `requests` >= 2.31.0 - HTTP library for Gist sync
+  - `keyring` >= 24.0.0 - Secure token storage
 
 ---
 
@@ -939,7 +941,7 @@ A: **No, this is not possible.** This fork has fundamentally different architect
 - Added features (multi-PC sync, setup wizard, devices view)
 
 While the original codebase was used as a starting point, they are now **completely different programs**. You would need to:
-1. Uninstall this fork: `pipx uninstall claude-goblin-mod`
+1. Uninstall this fork: `pipx uninstall claude-code-usage-analytics`
 2. Install the original: `pip install claude-goblin`
 3. Start fresh with new database
 

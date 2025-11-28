@@ -360,7 +360,7 @@ def _calculate_distributed_recommended_pct(reset_str: str) -> float:
 
     try:
         # Try to use stored reset time information first for accurate week_start
-        stored_week_start = get_week_start_datetime("opus_reset")
+        stored_week_start = get_week_start_datetime("sonnet_reset")
         if stored_week_start:
             now = datetime.now(stored_week_start.tzinfo)
 
@@ -862,12 +862,12 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
 
             session_reset = format_reset_date(limits['session_reset'])
             week_reset = format_reset_date(limits['week_reset'])
-            opus_reset = format_reset_date(limits['opus_reset'])
+            sonnet_reset = format_reset_date(limits['sonnet_reset'])
 
             # Calculate costs for each limit period (based on reset times)
             session_stats = _calculate_session_cost(records, limits.get('session_reset'))
             weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
-            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('sonnet_reset'))
             today_cost = _calculate_today_cost(records)
 
             # Calculate recommended usage percentages
@@ -890,10 +890,10 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
             # Parse opus reset time with distributed calculation (separate from week reset)
-            # Opus uses even distribution across 7-day period for gradual red bar reduction
-            opus_recommended_pct = 0
-            if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
+            # Sonnet uses even distribution across 7-day period for gradual red bar reduction
+            sonnet_recommended_pct = 0
+            if limits.get('sonnet_reset'):
+                sonnet_recommended_pct = _calculate_distributed_recommended_pct(limits['sonnet_reset'])
 
             # Create table structure with 3 rows per limit
             # M1/M2 modes use no padding, M3/M4 modes use reduced padding for compact display
@@ -957,32 +957,32 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
-                # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
-                limits_table.add_row("Current week (Opus)")
+                # Sonnet limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
+                limits_table.add_row("Current week (Sonnet)")
 
-                # Opus uses its own reset time (opus_reset) which may differ from week_reset
-                if opus_recommended_pct > 0:
-                    opus_bar = _create_usage_bar_with_recommended(
-                        limits["opus_pct"],
-                        opus_recommended_pct,
+                # Sonnet uses its own reset time (sonnet_reset) which may differ from week_reset
+                if sonnet_recommended_pct > 0:
+                    sonnet_bar = _create_usage_bar_with_recommended(
+                        limits["sonnet_pct"],
+                        sonnet_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
                     )
                 else:
-                    opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+                    sonnet_bar = _create_usage_bar_with_percent(limits["sonnet_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
-                limits_table.add_row(opus_bar)
+                limits_table.add_row(sonnet_bar)
                 # Only show reset info if usage > 0%
-                if limits["opus_pct"] > 0:
+                if limits["sonnet_pct"] > 0:
                     # Weekly mode: show detailed token info with cache
                     if view_mode == "weekly":
-                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
-                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                        io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
                     else:
                         # Usage mode: cost only
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -1048,35 +1048,35 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
-                # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
-                limits_table.add_row("Current week (Opus)")
+                # Sonnet limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
+                limits_table.add_row("Current week (Sonnet)")
 
-                # Opus uses its own reset time (opus_reset) which may differ from week_reset
-                if opus_recommended_pct > 0:
-                    opus_bar = _create_usage_bar_with_recommended_separate(
-                        limits["opus_pct"],
-                        opus_recommended_pct,
+                # Sonnet uses its own reset time (sonnet_reset) which may differ from week_reset
+                if sonnet_recommended_pct > 0:
+                    sonnet_bar = _create_usage_bar_with_recommended_separate(
+                        limits["sonnet_pct"],
+                        sonnet_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
                     )
                 else:
-                    opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+                    sonnet_bar = _create_bar(limits["sonnet_pct"], 100, width=bar_width, color=_get_bar_color(limits["sonnet_pct"], color_mode, colors))
 
                 bar_text = Text()
-                bar_text.append(opus_bar)
-                bar_text.append(f"  {limits['opus_pct']}%", style="bold white")
+                bar_text.append(sonnet_bar)
+                bar_text.append(f"  {limits['sonnet_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
-                if limits["opus_pct"] > 0:
+                if limits["sonnet_pct"] > 0:
                     # Weekly mode: show detailed token info with cache
                     if view_mode == "weekly":
-                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
-                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                        io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
                     else:
                         # Usage mode: cost only
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
 
                 # Store table for later grouped output
                 usage_content = limits_table
@@ -1136,32 +1136,32 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
-                # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
-                limits_table.add_row("Current week (Opus)")
+                # Sonnet limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
+                limits_table.add_row("Current week (Sonnet)")
 
-                # Opus uses its own reset time (opus_reset) which may differ from week_reset
-                if opus_recommended_pct > 0:
-                    opus_bar = _create_usage_bar_with_recommended(
-                        limits["opus_pct"],
-                        opus_recommended_pct,
+                # Sonnet uses its own reset time (sonnet_reset) which may differ from week_reset
+                if sonnet_recommended_pct > 0:
+                    sonnet_bar = _create_usage_bar_with_recommended(
+                        limits["sonnet_pct"],
+                        sonnet_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
                     )
                 else:
-                    opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+                    sonnet_bar = _create_usage_bar_with_percent(limits["sonnet_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
-                limits_table.add_row(opus_bar)
+                limits_table.add_row(sonnet_bar)
                 # Only show reset info if usage > 0%
-                if limits["opus_pct"] > 0:
+                if limits["sonnet_pct"] > 0:
                     # Weekly mode: show detailed token info with cache
                     if view_mode == "weekly":
-                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
-                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                        io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
                     else:
                         # Usage mode: cost only
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -1232,35 +1232,35 @@ def render_dashboard(summary: UsageSummary, stats: AggregatedStats, records: lis
                     limits_table.add_row(f"Resets {week_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
                 limits_table.add_row("")  # Blank line
 
-                # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
-                limits_table.add_row("Current week (Opus)")
+                # Sonnet limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
+                limits_table.add_row("Current week (Sonnet)")
 
-                # Opus uses its own reset time (opus_reset) which may differ from week_reset
-                if opus_recommended_pct > 0:
-                    opus_bar = _create_usage_bar_with_recommended_separate(
-                        limits["opus_pct"],
-                        opus_recommended_pct,
+                # Sonnet uses its own reset time (sonnet_reset) which may differ from week_reset
+                if sonnet_recommended_pct > 0:
+                    sonnet_bar = _create_usage_bar_with_recommended_separate(
+                        limits["sonnet_pct"],
+                        sonnet_recommended_pct,
                         width=bar_width,
                         color_mode=color_mode,
                         colors=colors
                     )
                 else:
-                    opus_bar = _create_bar(limits["opus_pct"], 100, width=bar_width, color=_get_bar_color(limits["opus_pct"], color_mode, colors))
+                    sonnet_bar = _create_bar(limits["sonnet_pct"], 100, width=bar_width, color=_get_bar_color(limits["sonnet_pct"], color_mode, colors))
 
                 bar_text = Text()
-                bar_text.append(opus_bar)
-                bar_text.append(f"  {limits['opus_pct']}%", style="bold white")
+                bar_text.append(sonnet_bar)
+                bar_text.append(f"  {limits['sonnet_pct']}%", style="bold white")
                 limits_table.add_row(bar_text)
                 # Only show reset info if usage > 0%
-                if limits["opus_pct"] > 0:
+                if limits["sonnet_pct"] > 0:
                     # Weekly mode: show detailed token info with cache
                     if view_mode == "weekly":
-                        io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
-                        cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
+                        io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                        cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{io_str}] (C:{cache_str})", style=DIM)
                     else:
                         # Usage mode: cost only
-                        limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])})", style=DIM)
+                        limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])})", style=DIM)
 
                 # Wrap in outer "Usage Limits" panel
                 usage_content = Panel(
@@ -1695,13 +1695,13 @@ def _calculate_weekly_sonnet_cost(records: list[UsageRecord], week_reset_str: st
     }
 
 
-def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str = None) -> dict:
+def _calculate_weekly_sonnet_cost(records: list[UsageRecord], sonnet_reset_str: str = None) -> dict:
     """
-    Calculate cost and tokens for current Opus week period (since opus reset, opus models only).
+    Calculate cost and tokens for current Sonnet week period (since sonnet reset, Sonnet models only).
 
     Args:
         records: List of usage records (may be filtered by view mode)
-        opus_reset_str: Opus reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
+        sonnet_reset_str: Sonnet reset time string (e.g., "Oct 27, 9:59am (Asia/Seoul)" or "10/27 9:59am")
                        If None, falls back to stored reset time or last 7 days
 
     Returns:
@@ -1716,7 +1716,7 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     week_start = None
     use_stored_time = False
     try:
-        week_start_dt = get_week_start_datetime("opus_reset")
+        week_start_dt = get_week_start_datetime("sonnet_reset")
         if week_start_dt:
             # Convert to UTC for comparison with records
             week_start = week_start_dt.astimezone(timezone.utc)
@@ -1725,13 +1725,13 @@ def _calculate_weekly_opus_cost(records: list[UsageRecord], opus_reset_str: str 
     except Exception:
         pass
 
-    # If stored time is not available, try to parse opus_reset_str
-    if week_start is None and opus_reset_str:
+    # If stored time is not available, try to parse sonnet_reset_str
+    if week_start is None and sonnet_reset_str:
         try:
             # Extract timezone
-            tz_match = re.search(r'\((.*?)\)', opus_reset_str)
+            tz_match = re.search(r'\((.*?)\)', sonnet_reset_str)
             tz_name = tz_match.group(1) if tz_match else 'UTC'
-            reset_no_tz = opus_reset_str.split(' (')[0].strip()
+            reset_no_tz = sonnet_reset_str.split(' (')[0].strip()
 
             try:
                 tz = ZoneInfo(tz_name)
@@ -2094,13 +2094,13 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             # Use reset strings as-is (no formatting) for weekly mode
             session_reset = limits['session_reset']
             week_reset = limits['week_reset']
-            opus_reset = limits['opus_reset']
+            sonnet_reset = limits['sonnet_reset']
 
             # Calculate costs for each limit period (based on reset times)
             from datetime import timedelta
             session_stats = _calculate_session_cost(records, limits.get('session_reset'))
             weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('week_reset'))
-            weekly_opus_stats = _calculate_weekly_opus_cost(records, limits.get('opus_reset'))
+            weekly_sonnet_stats = _calculate_weekly_sonnet_cost(records, limits.get('sonnet_reset'))
             today_cost = _calculate_today_cost(records)
 
             # Get color mode and colors from view_mode_ref
@@ -2128,10 +2128,10 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
                 weekly_recommended_pct = _calculate_weekly_recommended_pct(limits['week_reset'], weekly_days)
 
             # Parse opus reset time with distributed calculation (separate from week reset)
-            # Opus uses even distribution across 7-day period for gradual red bar reduction
-            opus_recommended_pct = 0
-            if limits.get('opus_reset'):
-                opus_recommended_pct = _calculate_distributed_recommended_pct(limits['opus_reset'])
+            # Sonnet uses even distribution across 7-day period for gradual red bar reduction
+            sonnet_recommended_pct = 0
+            if limits.get('sonnet_reset'):
+                sonnet_recommended_pct = _calculate_distributed_recommended_pct(limits['sonnet_reset'])
 
             # Calculate bar width based on terminal width (same as usage mode)
             terminal_width = console.width if console else 120
@@ -2184,27 +2184,27 @@ def _create_kpi_section(summary: UsageSummary, records: list[UsageRecord], view_
             limits_table.add_row("")  # Blank line
 
             # Opus limit (2-3 rows: hide reset info if 0%, matching claude /usage behavior)
-            limits_table.add_row("Current week (Opus)")
+            limits_table.add_row("Current week (Sonnet)")
 
-            # Opus uses its own reset time (opus_reset) which may differ from week_reset
-            if opus_recommended_pct > 0:
-                opus_bar = _create_usage_bar_with_recommended(
-                    limits["opus_pct"],
-                    opus_recommended_pct,
+            # Opus uses its own reset time (sonnet_reset) which may differ from week_reset
+            if sonnet_recommended_pct > 0:
+                sonnet_bar = _create_usage_bar_with_recommended(
+                    limits["sonnet_pct"],
+                    sonnet_recommended_pct,
                     width=bar_width,
                     color_mode=color_mode,
                     colors=colors
                 )
             else:
-                opus_bar = _create_usage_bar_with_percent(limits["opus_pct"], width=bar_width, color_mode=color_mode, colors=colors)
+                sonnet_bar = _create_usage_bar_with_percent(limits["sonnet_pct"], width=bar_width, color_mode=color_mode, colors=colors)
 
-            limits_table.add_row(opus_bar)
+            limits_table.add_row(sonnet_bar)
             # Only show reset info if usage > 0%
-            if limits["opus_pct"] > 0:
+            if limits["sonnet_pct"] > 0:
                 # Weekly mode: show detailed token info with cache
-                opus_io_str = f"{_format_number(weekly_opus_stats['input_tokens'])}I / {_format_number(weekly_opus_stats['output_tokens'])}O"
-                opus_cache_str = f"{_format_number(weekly_opus_stats['cache_creation_tokens'])}W / {_format_number(weekly_opus_stats['cache_read_tokens'])}R"
-                limits_table.add_row(f"Resets {opus_reset} ({format_cost(weekly_opus_stats['cost'])}) [{opus_io_str}] (C:{opus_cache_str})", style=DIM)
+                sonnet_io_str = f"{_format_number(weekly_sonnet_stats['input_tokens'])}I / {_format_number(weekly_sonnet_stats['output_tokens'])}O"
+                sonnet_cache_str = f"{_format_number(weekly_sonnet_stats['cache_creation_tokens'])}W / {_format_number(weekly_sonnet_stats['cache_read_tokens'])}R"
+                limits_table.add_row(f"Resets {sonnet_reset} ({format_cost(weekly_sonnet_stats['cost'])}) [{sonnet_io_str}] (C:{sonnet_cache_str})", style=DIM)
 
             # Wrap in outer "Usage Limits" panel (expand to fit terminal width)
             limits_outer_panel = Panel(

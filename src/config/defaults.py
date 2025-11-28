@@ -11,7 +11,7 @@ All prices are per million tokens (MTok) in USD.
 
 #region Model Pricing Defaults
 # Prices per million tokens (USD)
-# Source: https://docs.claude.com/en/docs/about-claude/pricing (2025-01-15)
+# Source: https://platform.claude.com/docs/en/about-claude/pricing (2025-11-25)
 
 DEFAULT_MODEL_PRICING = {
     # Sonnet 4.5 - Current balanced model (≤200K tokens)
@@ -41,14 +41,23 @@ DEFAULT_MODEL_PRICING = {
         "display_name": "Sonnet 3.7",
         "notes": "Legacy Sonnet 3.7",
     },
-    # Opus 4.1 - Current flagship model
+    # Opus 4.5 - Current flagship model
+    "claude-opus-4-5-20251101": {
+        "input_price": 5.0,
+        "output_price": 25.0,
+        "cache_write_price": 6.25,
+        "cache_read_price": 0.50,
+        "display_name": "Opus 4.5",
+        "notes": "Current flagship model (released Nov 24, 2025)",
+    },
+    # Opus 4.1 - Legacy flagship model
     "claude-opus-4-1-20250805": {
         "input_price": 15.0,
         "output_price": 75.0,
         "cache_write_price": 18.75,
         "cache_read_price": 1.50,
         "display_name": "Opus 4.1",
-        "notes": "Current flagship model",
+        "notes": "Legacy flagship model",
     },
     # Opus 4 - Legacy flagship model
     "claude-opus-4-20250514": {
@@ -59,14 +68,23 @@ DEFAULT_MODEL_PRICING = {
         "display_name": "Opus 4",
         "notes": "Legacy Opus 4",
     },
-    # Haiku 3.5 - Current fast model
+    # Haiku 4.5 - Current fast model
+    "claude-haiku-4-5-20251015": {
+        "input_price": 1.0,
+        "output_price": 5.0,
+        "cache_write_price": 1.25,
+        "cache_read_price": 0.10,
+        "display_name": "Haiku 4.5",
+        "notes": "Current fast model (released Oct 15, 2025)",
+    },
+    # Haiku 3.5 - Legacy fast model
     "claude-haiku-3-5-20241022": {
         "input_price": 0.80,
         "output_price": 4.0,
         "cache_write_price": 1.0,
         "cache_read_price": 0.08,
         "display_name": "Haiku 3.5",
-        "notes": "Current fast model",
+        "notes": "Legacy fast model",
     },
     # Synthetic/test model
     "<synthetic>": {
@@ -87,9 +105,14 @@ SETTINGS_MODEL_GROUPS = [
         "model_ids": ["claude-sonnet-4-5-20250929", "claude-sonnet-4-20250514", "claude-sonnet-3-7-20250219"],
     },
     {
-        "key": "opus-4",
-        "display_name": "Opus 4",
-        "model_ids": ["claude-opus-4-1-20250805", "claude-opus-4-20250514"],
+        "key": "opus-4.5",
+        "display_name": "Opus 4.5",
+        "model_ids": ["claude-opus-4-5-20251101", "claude-opus-4-1-20250805", "claude-opus-4-20250514"],
+    },
+    {
+        "key": "haiku-4.5",
+        "display_name": "Haiku 4.5",
+        "model_ids": ["claude-haiku-4-5-20251015", "claude-haiku-3-5-20241022"],
     },
 ]
 

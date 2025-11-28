@@ -370,10 +370,10 @@ def _limits_updater_thread(stop_event: threading.Event, interval: int = 60) -> N
                     save_limits_snapshot(
                         session_pct=limits["session_pct"],
                         week_pct=limits["week_pct"],
-                        opus_pct=limits["opus_pct"],
+                        sonnet_pct=limits["sonnet_pct"],
                         session_reset=limits["session_reset"],
                         week_reset=limits["week_reset"],
-                        opus_reset=limits["opus_reset"],
+                        sonnet_reset=limits["sonnet_reset"],
                     )
             except Exception:
                 pass  # Silently ignore errors in background thread
@@ -957,10 +957,10 @@ def _run_refresh_dashboard(jsonl_files: list[Path], console: Console, original_t
                     save_limits_snapshot(
                         session_pct=limits["session_pct"],
                         week_pct=limits["week_pct"],
-                        opus_pct=limits["opus_pct"],
+                        sonnet_pct=limits["sonnet_pct"],
                         session_reset=limits["session_reset"],
                         week_reset=limits["week_reset"],
-                        opus_reset=limits["opus_reset"],
+                        sonnet_reset=limits["sonnet_reset"],
                     )
                     console.print(f"[dim green]✓ Updated: Session {limits['session_pct']}%, Week {limits['week_pct']}%[/dim green]")
                 elif limits and "error" in limits:
@@ -1147,10 +1147,10 @@ def _run_watch_dashboard(jsonl_files: list[Path], console: Console, original_ter
                     save_limits_snapshot(
                         session_pct=limits["session_pct"],
                         week_pct=limits["week_pct"],
-                        opus_pct=limits["opus_pct"],
+                        sonnet_pct=limits["sonnet_pct"],
                         session_reset=limits["session_reset"],
                         week_reset=limits["week_reset"],
-                        opus_reset=limits["opus_reset"],
+                        sonnet_reset=limits["sonnet_reset"],
                     )
                     console.print(f"[dim green]✓ Updated: Session {limits['session_pct']}%, Week {limits['week_pct']}%[/dim green]")
                 elif limits and "error" in limits:
@@ -1408,9 +1408,7 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                 if limits_result['completed']:
                     limits = limits_result['data']
                     if limits and "error" in limits:
-                        from rich.panel import Panel
-                        from rich.text import Text
-
+                        # Panel and Text are already imported at module level
                         # Check if it's an untrusted folder error
                         if limits.get("error") == "untrusted_folder":
                             console.clear()
@@ -1448,10 +1446,10 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
                             save_limits_snapshot(
                                 session_pct=limits["session_pct"],
                                 week_pct=limits["week_pct"],
-                                opus_pct=limits["opus_pct"],
+                                sonnet_pct=limits["sonnet_pct"],
                                 session_reset=limits["session_reset"],
                                 week_reset=limits["week_reset"],
-                                opus_reset=limits["opus_reset"],
+                                sonnet_reset=limits["sonnet_reset"],
                             )
                         except (sqlite3.Error, OSError) as exc:
                             _handle_database_exception("Failed to cache usage limits.", exc)
@@ -1561,13 +1559,13 @@ def _display_dashboard(jsonl_files: list[Path], console: Console, skip_limits: b
 
                 earliest_week_start = adjusted_week_reset_date - timedelta(days=7)
 
-                # Check opus reset week start
+                # Check sonnet reset week start
                 try:
-                    opus_week_start_dt = get_week_start_datetime("opus_reset")
-                    if opus_week_start_dt:
-                        opus_week_start_utc = opus_week_start_dt.astimezone(dt_timezone.utc)
-                        if opus_week_start_utc < earliest_week_start:
-                            earliest_week_start = opus_week_start_utc
+                    sonnet_week_start_dt = get_week_start_datetime("sonnet_reset")
+                    if sonnet_week_start_dt:
+                        sonnet_week_start_utc = sonnet_week_start_dt.astimezone(dt_timezone.utc)
+                        if sonnet_week_start_utc < earliest_week_start:
+                            earliest_week_start = sonnet_week_start_utc
                 except Exception:
                     pass
 
