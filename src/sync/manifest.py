@@ -59,33 +59,67 @@ class Manifest:
         current_file: str,
         total_records: int = 0,
         last_record_date: Optional[str] = None,
+        data_files: Optional[list[str]] = None,
     ) -> None:
         """
         Add or update machine entry.
 
         Args:
             machine_name: Machine identifier
-            current_file: Current data filename
+            current_file: Current data filename (for backwards compatibility)
             total_records: Total number of records
             last_record_date: Date of last record (YYYY-MM-DD)
+            data_files: List of data filenames (for chunked export)
         """
-        # Remove existing entry if present
+        # Get existing machine entry to preserve backups
+        existing = self.get_machine(machine_name)
+        existing_backups = existing.get("backups", []) if existing else []
+
+        # Remove existing entry
         self.data["machines"] = [
             m for m in self.data["machines"]
             if m["machine_name"] != machine_name
         ]
 
-        # Add new entry
-        self.data["machines"].append({
+        # Build new entry
+        entry = {
             "machine_name": machine_name,
             "last_sync": datetime.now(timezone.utc).isoformat(),
             "last_record_date": last_record_date,
             "total_records": total_records,
             "current_file": current_file,
-            "backups": [],
-        })
+            "backups": existing_backups,
+        }
 
+        # Add data_files if provided (for chunked export)
+        if data_files:
+            entry["data_files"] = data_files
+
+        self.data["machines"].append(entry)
         self.data["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+    def get_data_files(self, machine_name: str) -> list[str]:
+        """
+        Get list of data files for a machine.
+
+        Returns data_files if available, otherwise [current_file].
+
+        Args:
+            machine_name: Machine identifier
+
+        Returns:
+            List of data filenames
+        """
+        machine = self.get_machine(machine_name)
+        if machine is None:
+            return []
+
+        # Use data_files if available, otherwise fall back to current_file
+        if "data_files" in machine and machine["data_files"]:
+            return machine["data_files"]
+        elif "current_file" in machine:
+            return [machine["current_file"]]
+        return []
 
     def get_machine(self, machine_name: str) -> Optional[dict[str, Any]]:
         """

@@ -216,8 +216,18 @@ def push(
         # Show statistics
         table = Table(show_header=False, box=None)
         table.add_row("Records exported:", f"{stats['exported_records']:,}")
+
+        # Show chunked info if applicable
+        if stats.get("chunked"):
+            table.add_row("Files uploaded:", f"{stats.get('files_uploaded', 1)} (split by year)")
+        elif stats.get("files_uploaded", 1) > 0:
+            table.add_row("Files uploaded:", str(stats.get("files_uploaded", 1)))
+
         table.add_row("Backup created:", "Yes" if stats.get("backup_created") else "No")
         table.add_row("Gist ID:", stats.get("gist_id", "N/A"))
+
+        if stats.get("old_files_deleted"):
+            table.add_row("Old files cleaned:", str(stats["old_files_deleted"]))
 
         if stats.get("backups_deleted"):
             table.add_row("Old backups deleted:", str(stats["backups_deleted"]))

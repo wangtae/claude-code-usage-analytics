@@ -12,7 +12,7 @@ from typing import Any, Optional
 from src.config.user_config import get_machine_name, get_db_path
 from src.sync.exceptions import ConflictError
 from src.sync.gist_client import GistClient
-from src.sync.json_export import export_to_json, get_last_export_date
+from src.sync.json_export import export_to_json, export_to_json_chunked, get_last_export_date
 from src.sync.json_import import import_from_json, merge_multiple_exports
 from src.sync.manifest import Manifest
 from src.sync.token_manager import TokenManager
@@ -83,22 +83,29 @@ class SyncManager:
             "conflicts_resolved": False,
         }
 
-        # 1. Export local data
+        # 1. Export local data (automatically chunks if too large)
         since_date = None if force else get_last_export_date()
 
-        # Use get_current_machine_db_path() to ensure we export from the correct
-        # per-machine database file (usage_history_{machine_name}.db)
-        # Note: export_to_json will use get_current_machine_db_path() when db_path is None
-        export_data = export_to_json(
-            db_path=None,  # Let export_to_json resolve the correct machine-specific path
+        # Use chunked export which automatically splits by year if data is too large
+        # This prevents GitHub Gist 422 errors for large datasets
+        chunked_exports = export_to_json_chunked(
+            db_path=None,  # Let export resolve the correct machine-specific path
             since_date=since_date,
-            include_stats=True,
         )
 
-        stats["exported_records"] = len(export_data["records"])
+        # Calculate total records across all chunks
+        total_records = sum(
+            len(data.get("records", []))
+            for data in chunked_exports.values()
+        )
+        stats["exported_records"] = total_records
 
-        if stats["exported_records"] == 0 and not force:
+        if total_records == 0 and not force:
             return {"status": "nothing_to_sync", **stats}
+
+        # Check if data is chunked (multiple files)
+        is_chunked = len(chunked_exports) > 1 or "" not in chunked_exports
+        stats["chunked"] = is_chunked
 
         # 2. Ensure Gist exists
         if self.gist_id is None:
@@ -108,52 +115,86 @@ class SyncManager:
         # 3. Download current manifest
         manifest = self._download_manifest()
 
-        # 4. Update manifest with new data
+        # 4. Get old files to potentially delete (when switching from single to chunked)
+        old_data_files = manifest.get_data_files(self.machine_name)
+
+        # 5. Prepare file list and update manifest
+        base_filename = f"usage_data_{self.machine_name}"
+        data_files = []
+        newest_date = None
+        total_stats_records = 0
+
+        for suffix, export_data in chunked_exports.items():
+            filename = f"{base_filename}{suffix}.json"
+            data_files.append(filename)
+
+            # Track newest date
+            data_newest = export_data.get("data_range", {}).get("newest")
+            if data_newest and (newest_date is None or data_newest > newest_date):
+                newest_date = data_newest
+
+            # Track total records from statistics
+            total_stats_records += export_data.get("statistics", {}).get("total_records", 0)
+
+        # Update manifest with new data
         manifest.add_machine(
             machine_name=self.machine_name,
-            current_file=f"usage_data_{self.machine_name}.json",
-            total_records=export_data.get("statistics", {}).get("total_records", 0),
-            last_record_date=export_data["data_range"]["newest"],
+            current_file=data_files[0],  # Primary file for backwards compatibility
+            total_records=total_stats_records,
+            last_record_date=newest_date,
+            data_files=data_files if is_chunked else None,
         )
 
-        # 5. Conflict detection and auto-merge (unless skipped)
+        # 6. Conflict detection and auto-merge (unless skipped)
         if not skip_conflict_check:
             try:
                 manifest = self._detect_and_resolve_conflict(manifest)
-                # If we got here and conflict was detected, it was resolved
                 if stats.get("conflicts_resolved"):
                     stats["conflicts_resolved"] = True
             except ConflictError:
-                # Re-raise conflict errors to be handled by caller
                 raise
 
-        # 6. Create backup if requested
-        current_filename = f"usage_data_{self.machine_name}.json"
-
-        if create_backup:
-            backup_created = self._create_backup(current_filename, manifest)
+        # 7. Create backup if requested (only for primary file)
+        if create_backup and old_data_files:
+            backup_created = self._create_backup(old_data_files[0], manifest)
             stats["backup_created"] = backup_created
 
-        # 7. Upload new data
-        files_to_update = {
-            current_filename: json.dumps(export_data, indent=2, ensure_ascii=False)
-        }
+        # 8. Prepare files to upload
+        files_to_update = {}
 
-        # 8. Add manifest to upload
+        for suffix, export_data in chunked_exports.items():
+            filename = f"{base_filename}{suffix}.json"
+            files_to_update[filename] = json.dumps(export_data, indent=2, ensure_ascii=False)
+
+        # Add manifest to upload
         files_to_update[Manifest.FILENAME] = manifest.to_json()
 
-        # 9. Upload to Gist
+        # 9. Delete old files that are no longer needed
+        # (e.g., when switching from single file to chunked)
+        new_file_set = set(data_files)
+        old_file_set = set(old_data_files) if old_data_files else set()
+        files_to_delete = old_file_set - new_file_set
+
+        for old_file in files_to_delete:
+            files_to_update[old_file] = None  # None = delete file from Gist
+
+        # 10. Upload to Gist
         self.client.update_gist(self.gist_id, files_to_update)
         stats["manifest_updated"] = True
+        stats["files_uploaded"] = len(data_files)
 
-        # 10. Clean up old backups
+        if files_to_delete:
+            stats["old_files_deleted"] = len(files_to_delete)
+
+        # 11. Clean up old backups
         old_backups = manifest.get_old_backups(self.machine_name)
         if old_backups:
             self._delete_old_backups(old_backups, manifest)
             stats["backups_deleted"] = len(old_backups)
 
-        # 11. Update local sync metadata
-        self._update_local_sync_metadata(export_data["export_date"])
+        # 12. Update local sync metadata
+        first_export = next(iter(chunked_exports.values()))
+        self._update_local_sync_metadata(first_export["export_date"])
 
         stats["status"] = "success"
         return stats
@@ -197,29 +238,44 @@ class SyncManager:
                 print(f"Warning: Machine '{machine_name}' not found in manifest")
                 continue
 
-            current_file = machine["current_file"]
+            # Get all data files for this machine (supports chunked exports)
+            data_files = manifest.get_data_files(machine_name)
 
-            try:
-                # Download JSON data
-                json_str = self.client.get_file_content(self.gist_id, current_file)
-                json_data = json.loads(json_str)
+            if not data_files:
+                print(f"Warning: No data files found for '{machine_name}'")
+                continue
 
-                # Get database path for this specific machine
-                from src.storage.snapshot_db import get_storage_dir
-                storage_dir = get_storage_dir()
-                machine_db_path = storage_dir / f"usage_history_{machine_name}.db"
+            # Get database path for this specific machine
+            from src.storage.snapshot_db import get_storage_dir
+            storage_dir = get_storage_dir()
+            machine_db_path = storage_dir / f"usage_history_{machine_name}.db"
 
-                # Import to machine-specific database
-                import_stats = import_from_json(json_data, db_path=machine_db_path)
+            machine_new = 0
+            machine_dup = 0
+            machine_errors = 0
 
-                stats["new_records"] += import_stats["new_records"]
-                stats["duplicate_records"] += import_stats["duplicate_records"]
-                stats["errors"] += import_stats["errors"]
-                stats["machines_pulled"] += 1
+            # Download and import each data file
+            for data_file in data_files:
+                try:
+                    # Download JSON data
+                    json_str = self.client.get_file_content(self.gist_id, data_file)
+                    json_data = json.loads(json_str)
 
-            except Exception as e:
-                print(f"Error pulling data for {machine_name}: {e}")
-                stats["errors"] += 1
+                    # Import to machine-specific database
+                    import_stats = import_from_json(json_data, db_path=machine_db_path)
+
+                    machine_new += import_stats["new_records"]
+                    machine_dup += import_stats["duplicate_records"]
+                    machine_errors += import_stats["errors"]
+
+                except Exception as e:
+                    print(f"Error pulling {data_file} for {machine_name}: {e}")
+                    machine_errors += 1
+
+            stats["new_records"] += machine_new
+            stats["duplicate_records"] += machine_dup
+            stats["errors"] += machine_errors
+            stats["machines_pulled"] += 1
 
         stats["status"] = "success"
         return stats
