@@ -118,13 +118,14 @@ def set_token(token: str):
 def push(
     force: bool = typer.Option(False, "--force", "-f", help="Force push, skip conflict detection (may overwrite changes)"),
     export_all: bool = typer.Option(False, "--export-all", help="Export all data (not incremental)"),
-    no_backup: bool = typer.Option(False, "--no-backup", help="Skip backup creation"),
+    backup: bool = typer.Option(False, "--backup", "-b", help="Create backup before overwriting (disabled by default)"),
 ):
     """
     Push local data to GitHub Gist (incremental).
 
     Automatically detects and resolves conflicts when multiple devices push simultaneously.
     Use --force to skip conflict detection and force overwrite.
+    Backup is disabled by default to save Gist space.
     """
     try:
         from src.sync.exceptions import ConflictError
@@ -135,7 +136,7 @@ def push(
         # If --force, skip conflict check. Otherwise, use auto-merge.
         stats = sync_manager.push(
             force=export_all,
-            create_backup=not no_backup,
+            create_backup=backup,  # Backup disabled by default (v1.7.9)
             skip_conflict_check=force
         )
 

@@ -38,7 +38,7 @@ class Manifest:
             "version": self.VERSION,
             "last_updated": datetime.now(timezone.utc).isoformat(),
             "machines": [],
-            "backup_retention_days": 30,
+            "backup_retention_days": 0,  # Backup disabled by default (v1.7.9)
         }
 
     def _validate(self) -> None:

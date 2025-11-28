@@ -12,9 +12,11 @@ from src.migrations.base import Migration
 # Import all migrations here
 from src.migrations.versions.v1_7_6_manifest_data_files import ManifestDataFilesMigration
 from src.migrations.versions.v1_7_7_sync_check import SyncCheckMigration
+from src.migrations.versions.v1_7_9_disable_backup import DisableBackupMigration
 
 # List of all migration classes (order doesn't matter, sorted by version automatically)
 ALL_MIGRATIONS: list[Type[Migration]] = [
     ManifestDataFilesMigration,
     SyncCheckMigration,
+    DisableBackupMigration,
 ]

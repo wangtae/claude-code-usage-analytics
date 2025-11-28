@@ -52,7 +52,7 @@ class SyncManager:
     def push(
         self,
         force: bool = False,
-        create_backup: bool = True,
+        create_backup: bool = False,  # Backup disabled by default (v1.7.9)
         skip_conflict_check: bool = False,
     ) -> dict[str, Any]:
         """

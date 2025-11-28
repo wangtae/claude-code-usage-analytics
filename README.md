@@ -34,14 +34,15 @@ Most features are accessed through keyboard shortcuts in the interactive dashboa
 - 🔄 **Real-time Updates** - Automatic file watching when Claude Code creates new logs
 - 📅 **Long-term Tracking** - Preserves usage data beyond Claude Code's 30-day limit
 - 🌐 **Multi-PC Sync** - Two synchronization methods:
-  - **GitHub Gist** (RECOMMENDED) - JSON-based sync with version control and automatic backups
+  - **GitHub Gist** (RECOMMENDED) - JSON-based sync with version control
     - ✅ Works on all platforms with GitHub account
-    - ✅ Automatic daily backups with 30-day retention
     - ✅ Git version history (unlimited restore points)
     - ✅ Automatic conflict resolution (v1.3.5+)
     - ✅ Incremental sync (only new data)
     - ✅ Safe: never modifies original `~/.claude/` files
     - ✅ No SQLite corruption issues
+    - ✅ Auto-chunked export for large datasets (v1.7.5+)
+    - ⚠️ Backup disabled by default to save space (v1.7.9+)
   - **OneDrive/iCloud** (Legacy) - Automatic cloud storage detection
     - ⚠️ **May be deprecated in future versions**
     - ⚠️ SQLite file corruption possible during sync
@@ -425,6 +426,7 @@ ccu config clear-machine-name                     # Use system hostname → [g]
 # GitHub Gist Sync (also in Settings: [e] [f])
 ccu gist setup           # Interactive setup wizard → [e] Gist Setup
 ccu gist push            # Upload local data to Gist → [f] Gist Sync → Push
+ccu gist push --backup   # Upload with backup (optional, disabled by default)
 ccu gist pull            # Download data from Gist → [f] Gist Sync → Pull
 ccu gist status          # Show sync status → [f] Gist Sync → Status
 
@@ -467,8 +469,9 @@ ccu gist setup
 # - Initial sync to Gist
 
 # 2. Regular sync (manual)
-ccu gist push    # Upload new data to Gist
-ccu gist pull    # Download data from other machines
+ccu gist push            # Upload new data to Gist (no backup)
+ccu gist push --backup   # Upload with backup (optional)
+ccu gist pull            # Download data from other machines
 
 # 3. Check status
 ccu gist status  # View sync info and Gist URL
@@ -477,9 +480,10 @@ ccu gist status  # View sync info and Gist URL
 **Benefits over OneDrive/iCloud:**
 - ✅ Works on all platforms (no OneDrive/iCloud required)
 - ✅ Version control (Git history of all changes)
-- ✅ Automatic daily backups (30-day retention)
 - ✅ No SQLite file corruption issues
 - ✅ Incremental sync (only new data)
+- ✅ Auto-chunked export for large datasets (v1.7.5+)
+- ✅ Optional backup with `--backup` flag
 
 **Setup Requirements:**
 1. GitHub account (free)
@@ -959,6 +963,37 @@ ccu heatmap --anon # Anonymize in heatmap
 ```
 
 Projects are renamed to `project-001`, `project-002`, etc., ranked by total token usage (highest usage = project-001).
+
+---
+
+## Changelog
+
+### v1.7.9 - Disable Backup (2025-11-28)
+- **Breaking Change**: Backup disabled by default to save Gist space
+  - `ccu gist push` no longer creates backups by default
+  - Use `ccu gist push --backup` to create backups explicitly
+- **Migration**: Automatically cleans up existing backup files from Gist on first run
+- **CLI Change**: `--no-backup` flag replaced with `--backup` (opt-in instead of opt-out)
+
+### v1.7.8 - Progressive Chunking (2025-11-28)
+- **Enhancement**: Progressive chunking for very large datasets
+  - Splits by year → month → chunk number when data exceeds limits
+  - Prevents GitHub Gist 422 errors for datasets with many records per month
+
+### v1.7.7 - Auto Sync Check (2025-11-27)
+- **Feature**: Automatic sync check on version upgrade
+  - Compares local record counts with Gist manifest
+  - Auto-pulls missing data if local is behind
+
+### v1.7.6 - Manifest Data Files (2025-11-27)
+- **Feature**: Support multiple data files per machine in Gist manifest
+  - Enables chunked export with year-based file splitting
+  - Backward compatible with single-file format
+
+### v1.7.5 - Auto-Chunked Export (2025-11-27)
+- **Feature**: Automatic chunking for large datasets
+  - Splits export by year when total size exceeds 10MB
+  - Prevents GitHub Gist file size limits
 
 ---
 
