@@ -183,11 +183,12 @@ def export_to_json(
 
 
 # Maximum recommended file size for Gist (in bytes)
-# GitHub recommends under 10MB, we use 8MB to be safe
-MAX_GIST_FILE_SIZE = 8 * 1024 * 1024  # 8MB
+# GitHub recommends under 10MB, we use 7MB to be safe with margin
+MAX_GIST_FILE_SIZE = 7 * 1024 * 1024  # 7MB
 
-# Estimated bytes per record in JSON format
-ESTIMATED_BYTES_PER_RECORD = 500
+# Estimated bytes per record in JSON format (with indentation)
+# Actual is ~520 bytes, use 550 for safety margin
+ESTIMATED_BYTES_PER_RECORD = 550
 
 
 def export_to_json_chunked(
@@ -196,11 +197,13 @@ def export_to_json_chunked(
     max_file_size: int = MAX_GIST_FILE_SIZE,
 ) -> dict[str, dict[str, Any]]:
     """
-    Export usage data to JSON format, split by year if data is too large.
+    Export usage data to JSON format, split into chunks if data is too large.
 
-    Returns a dictionary mapping filenames to their JSON data.
-    If data fits in one file, returns single file.
-    If data is too large, splits by year.
+    Splitting strategy (progressive):
+    1. If total data fits, single file
+    2. If not, split by year
+    3. If a year is too large, split by month
+    4. If a month is too large, split by chunk number
 
     Args:
         db_path: Path to database file (default: current machine DB)
@@ -210,7 +213,9 @@ def export_to_json_chunked(
     Returns:
         Dictionary mapping filename suffix to export data:
         - Single file: {"": {export_data}}
-        - Multiple files: {"_2024": {data}, "_2025": {data}}
+        - By year: {"_2024": {data}, "_2025": {data}}
+        - By month: {"_2025_01": {data}, "_2025_02": {data}}
+        - By chunk: {"_2025_11_p1": {data}, "_2025_11_p2": {data}}
     """
     if db_path is None:
         db_path = get_current_machine_db_path()
@@ -248,107 +253,294 @@ def export_to_json_chunked(
         if estimated_size <= max_file_size:
             return {"": export_to_json(db_path, since_date, include_stats=True)}
 
-        # Data is too large, split by year
-        # Get list of years in the data
-        year_query = """
-            SELECT DISTINCT substr(date, 1, 4) as year
+        # Data is too large, need to split
+        # Calculate max records per file
+        max_records_per_file = max_file_size // ESTIMATED_BYTES_PER_RECORD
+
+        # Get list of year-months in the data
+        period_query = """
+            SELECT DISTINCT substr(date, 1, 7) as year_month
             FROM usage_records
         """
         if since_date:
-            year_query += " WHERE date >= ?"
-        year_query += " ORDER BY year"
+            period_query += " WHERE date >= ?"
+        period_query += " ORDER BY year_month"
 
-        cursor.execute(year_query, params)
-        years = [row[0] for row in cursor.fetchall()]
+        cursor.execute(period_query, params)
+        year_months = [row[0] for row in cursor.fetchall()]
 
-        if not years:
+        if not year_months:
             return {"": export_to_json(db_path, since_date, include_stats=True)}
 
-        # Export each year separately
+        # Group by year first, check if year-level split is enough
+        years = sorted(set(ym[:4] for ym in year_months))
+
         result = {}
         export_date = datetime.now(timezone.utc).isoformat()
 
         for year in years:
-            year_start = f"{year}-01-01"
-            year_end = f"{year}-12-31"
-
-            # Build query for this year
-            query = """
-                SELECT
-                    session_id, message_uuid, timestamp, model,
-                    total_tokens, input_tokens, output_tokens,
-                    cache_creation_tokens, cache_read_tokens,
-                    folder, git_branch, version, date
-                FROM usage_records
-                WHERE date >= ? AND date <= ?
+            # Count records for this year
+            count_year_query = """
+                SELECT COUNT(*) FROM usage_records
+                WHERE substr(date, 1, 4) = ?
             """
-            query_params: list = [year_start, year_end]
+            cursor.execute(count_year_query, (year,))
+            year_count = cursor.fetchone()[0]
 
-            if since_date and since_date > year_start:
-                query = query.replace("date >= ?", "date >= ?", 1)
-                query_params[0] = since_date
+            if year_count <= max_records_per_file:
+                # Year fits in one file
+                year_data = _export_period(cursor, machine_name, export_date,
+                                          f"{year}-01-01", f"{year}-12-31", since_date)
+                if year_data:
+                    result[f"_{year}"] = year_data
+            else:
+                # Year is too large, split by month
+                year_month_list = [ym for ym in year_months if ym.startswith(year)]
 
-            query += " ORDER BY timestamp ASC"
+                for year_month in year_month_list:
+                    y, m = year_month.split("-")
 
-            cursor.execute(query, tuple(query_params))
+                    # Count records for this month
+                    count_month_query = """
+                        SELECT COUNT(*) FROM usage_records
+                        WHERE substr(date, 1, 7) = ?
+                    """
+                    cursor.execute(count_month_query, (year_month,))
+                    month_count = cursor.fetchone()[0]
 
-            records = []
-            for row in cursor:
-                records.append({
-                    "session_id": row[0],
-                    "message_uuid": row[1],
-                    "timestamp": row[2],
-                    "model": row[3],
-                    "total_tokens": row[4],
-                    "input_tokens": row[5],
-                    "output_tokens": row[6],
-                    "cache_creation_tokens": row[7],
-                    "cache_read_tokens": row[8],
-                    "folder": row[9],
-                    "git_branch": row[10],
-                    "version": row[11],
-                    "date": row[12],
-                })
+                    # Get last day of month
+                    if m in ("01", "03", "05", "07", "08", "10", "12"):
+                        last_day = "31"
+                    elif m in ("04", "06", "09", "11"):
+                        last_day = "30"
+                    else:  # February
+                        yr = int(y)
+                        if yr % 4 == 0 and (yr % 100 != 0 or yr % 400 == 0):
+                            last_day = "29"
+                        else:
+                            last_day = "28"
 
-            if not records:
-                continue
-
-            # Get statistics for this year
-            stats_query = """
-                SELECT
-                    COUNT(*) as total_records,
-                    COUNT(DISTINCT session_id) as total_sessions,
-                    COALESCE(SUM(total_tokens), 0) as total_tokens,
-                    COALESCE(SUM(input_tokens), 0) as input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as output_tokens
-                FROM usage_records
-                WHERE date >= ? AND date <= ?
-            """
-            cursor.execute(stats_query, (query_params[0], year_end))
-            stats_row = cursor.fetchone()
-
-            result[f"_{year}"] = {
-                "machine_name": machine_name,
-                "export_date": export_date,
-                "year": year,
-                "data_range": {
-                    "oldest": records[0]["date"] if records else None,
-                    "newest": records[-1]["date"] if records else None,
-                },
-                "records": records,
-                "statistics": {
-                    "total_records": stats_row[0],
-                    "total_sessions": stats_row[1],
-                    "total_tokens": stats_row[2],
-                    "input_tokens": stats_row[3],
-                    "output_tokens": stats_row[4],
-                },
-            }
+                    if month_count <= max_records_per_file:
+                        # Month fits in one file
+                        month_data = _export_period(cursor, machine_name, export_date,
+                                                   f"{year_month}-01", f"{year_month}-{last_day}",
+                                                   since_date)
+                        if month_data:
+                            result[f"_{year}_{m}"] = month_data
+                    else:
+                        # Month is too large, split by chunk
+                        chunks = _export_chunked_by_count(
+                            cursor, machine_name, export_date,
+                            f"{year_month}-01", f"{year_month}-{last_day}",
+                            since_date, max_records_per_file
+                        )
+                        for chunk_num, chunk_data in enumerate(chunks, 1):
+                            result[f"_{year}_{m}_p{chunk_num}"] = chunk_data
 
         return result if result else {"": export_to_json(db_path, since_date, include_stats=True)}
 
     finally:
         conn.close()
+
+
+def _export_chunked_by_count(
+    cursor: Any,
+    machine_name: str,
+    export_date: str,
+    start_date: str,
+    end_date: str,
+    since_date: Optional[str],
+    max_records: int,
+) -> list[dict[str, Any]]:
+    """
+    Export records for a period, split into multiple chunks by record count.
+
+    Args:
+        cursor: Database cursor
+        machine_name: Machine name
+        export_date: Export timestamp
+        start_date: Period start (YYYY-MM-DD)
+        end_date: Period end (YYYY-MM-DD)
+        since_date: Only include records after this date
+        max_records: Maximum records per chunk
+
+    Returns:
+        List of export data dicts
+    """
+    effective_start = start_date
+    if since_date and since_date > start_date:
+        effective_start = since_date
+
+    # Fetch all records for the period
+    query = """
+        SELECT
+            session_id, message_uuid, timestamp, model,
+            total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens,
+            folder, git_branch, version, date
+        FROM usage_records
+        WHERE date >= ? AND date <= ?
+        ORDER BY timestamp ASC
+    """
+
+    cursor.execute(query, (effective_start, end_date))
+
+    all_records = []
+    for row in cursor:
+        all_records.append({
+            "session_id": row[0],
+            "message_uuid": row[1],
+            "timestamp": row[2],
+            "model": row[3],
+            "total_tokens": row[4],
+            "input_tokens": row[5],
+            "output_tokens": row[6],
+            "cache_creation_tokens": row[7],
+            "cache_read_tokens": row[8],
+            "folder": row[9],
+            "git_branch": row[10],
+            "version": row[11],
+            "date": row[12],
+        })
+
+    if not all_records:
+        return []
+
+    # Split into chunks
+    chunks = []
+    total_chunks = (len(all_records) + max_records - 1) // max_records  # Ceiling division
+
+    for i in range(0, len(all_records), max_records):
+        chunk_records = all_records[i:i + max_records]
+        chunk_num = i // max_records + 1
+
+        # Calculate stats for this chunk
+        total_tokens = sum(r.get("total_tokens", 0) or 0 for r in chunk_records)
+        input_tokens = sum(r.get("input_tokens", 0) or 0 for r in chunk_records)
+        output_tokens = sum(r.get("output_tokens", 0) or 0 for r in chunk_records)
+        sessions = len(set(r["session_id"] for r in chunk_records))
+
+        chunks.append({
+            "machine_name": machine_name,
+            "export_date": export_date,
+            "period": f"{start_date[:7]}",
+            "chunk": f"{chunk_num}/{total_chunks}",
+            "data_range": {
+                "oldest": chunk_records[0]["date"] if chunk_records else None,
+                "newest": chunk_records[-1]["date"] if chunk_records else None,
+            },
+            "records": chunk_records,
+            "statistics": {
+                "total_records": len(chunk_records),
+                "total_sessions": sessions,
+                "total_tokens": total_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        })
+
+    return chunks
+
+
+def _export_period(
+    cursor: Any,
+    machine_name: str,
+    export_date: str,
+    start_date: str,
+    end_date: str,
+    since_date: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """
+    Export records for a specific date period.
+
+    Args:
+        cursor: Database cursor
+        machine_name: Machine name
+        export_date: Export timestamp
+        start_date: Period start (YYYY-MM-DD)
+        end_date: Period end (YYYY-MM-DD)
+        since_date: Only include records after this date
+
+    Returns:
+        Export data dict or None if no records
+    """
+    # Adjust start date if since_date is later
+    effective_start = start_date
+    if since_date and since_date > start_date:
+        effective_start = since_date
+
+    # Build query
+    query = """
+        SELECT
+            session_id, message_uuid, timestamp, model,
+            total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens,
+            folder, git_branch, version, date
+        FROM usage_records
+        WHERE date >= ? AND date <= ?
+        ORDER BY timestamp ASC
+    """
+
+    cursor.execute(query, (effective_start, end_date))
+
+    records = []
+    for row in cursor:
+        records.append({
+            "session_id": row[0],
+            "message_uuid": row[1],
+            "timestamp": row[2],
+            "model": row[3],
+            "total_tokens": row[4],
+            "input_tokens": row[5],
+            "output_tokens": row[6],
+            "cache_creation_tokens": row[7],
+            "cache_read_tokens": row[8],
+            "folder": row[9],
+            "git_branch": row[10],
+            "version": row[11],
+            "date": row[12],
+        })
+
+    if not records:
+        return None
+
+    # Get statistics
+    stats_query = """
+        SELECT
+            COUNT(*) as total_records,
+            COUNT(DISTINCT session_id) as total_sessions,
+            COALESCE(SUM(total_tokens), 0) as total_tokens,
+            COALESCE(SUM(input_tokens), 0) as input_tokens,
+            COALESCE(SUM(output_tokens), 0) as output_tokens
+        FROM usage_records
+        WHERE date >= ? AND date <= ?
+    """
+    cursor.execute(stats_query, (effective_start, end_date))
+    stats_row = cursor.fetchone()
+
+    # Determine period label
+    if start_date[5:7] == "01" and end_date[5:7] == "12":
+        period = start_date[:4]  # Year only
+    else:
+        period = start_date[:7]  # Year-month
+
+    return {
+        "machine_name": machine_name,
+        "export_date": export_date,
+        "period": period,
+        "data_range": {
+            "oldest": records[0]["date"] if records else None,
+            "newest": records[-1]["date"] if records else None,
+        },
+        "records": records,
+        "statistics": {
+            "total_records": stats_row[0],
+            "total_sessions": stats_row[1],
+            "total_tokens": stats_row[2],
+            "input_tokens": stats_row[3],
+            "output_tokens": stats_row[4],
+        },
+    }
 
 
 def save_json_export(
