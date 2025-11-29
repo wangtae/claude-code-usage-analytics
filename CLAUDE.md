@@ -5,7 +5,7 @@
 ## 프로젝트 개요
 
 **이름**: claude-code-usage-analytics
-**버전**: 1.8.1
+**버전**: 1.8.2
 **목적**: Claude Code 사용량을 추적, 시각화하고 여러 기기 간에 동기화하는 CLI TUI 대시보드
 
 ### 핵심 기능
@@ -434,6 +434,88 @@ print(result)
 4. **에러 처리**: 실패 시 명확한 에러 메시지 반환
 5. **테스트**: 새 설치와 업그레이드 모두 테스트
 
+### 9. 버전 릴리스 프로세스 (필수!)
+
+**사용자가 버전 태그 또는 버전 업을 요청하면 반드시 아래 단계를 따라야 합니다.**
+
+#### 릴리스 단계
+
+**1단계: 버전 번호 증가**
+
+`pyproject.toml`에서 버전을 0.0.1 증가:
+```toml
+# Before
+version = "1.8.1"
+
+# After
+version = "1.8.2"
+```
+
+**2단계: 버전 문서 생성**
+
+`docs/versions/{version}.md` 파일 생성:
+```markdown
+# Version 1.8.2
+
+**Release Date:** YYYY-MM-DD
+**Focus:** 간단한 설명
+
+## Overview
+변경 사항 요약
+
+## 주요 변경사항
+### 1. 변경/추가된 기능
+- 내용
+
+## 파일 변경 목록
+```
+변경된 파일 목록
+```
+
+## 업그레이드 노트
+설치 방법 및 마이그레이션 안내
+```
+
+**3단계: CHANGELOG.md 업데이트**
+
+`CHANGELOG.md` 상단에 새 버전 엔트리 추가:
+```markdown
+## [1.8.2] - YYYY-MM-DD
+
+### Added/Changed/Fixed
+- 변경 내용
+
+### Technical Details
+- 기술적 세부사항
+```
+
+**4단계: CLAUDE.md 버전 업데이트**
+
+`CLAUDE.md` 상단의 버전 정보 수정:
+```markdown
+**버전**: 1.8.2
+```
+
+그리고 "버전 히스토리" 섹션에 새 버전 추가.
+
+**5단계: Git 커밋 및 푸시**
+
+```bash
+git add pyproject.toml docs/versions/1.8.2.md CHANGELOG.md CLAUDE.md
+git commit -m "Release v1.8.2: 간단한 설명"
+git push origin main
+```
+
+#### 체크리스트
+
+버전 릴리스 시 확인:
+- [ ] `pyproject.toml` 버전 증가 (0.0.1)
+- [ ] `docs/versions/{version}.md` 생성
+- [ ] `CHANGELOG.md` 업데이트
+- [ ] `CLAUDE.md` 버전 및 히스토리 업데이트
+- [ ] 마이그레이션 필요 시 `src/migrations/versions/` 추가
+- [ ] Git 커밋 및 푸시
+
 ## 테스트
 
 ```bash
@@ -491,6 +573,7 @@ print(f"Snapshots: {len(data.get('daily_snapshots', []))}")
 
 ## 버전 히스토리
 
+- **v1.8.2**: CLAUDE.md 문서화 개선 (데이터 견고성 원칙, 마이그레이션 가이드, 릴리스 프로세스)
 - **v1.8.1**: --force 플래그가 전체 export 트리거하도록 수정
 - **v1.8.0**: daily_snapshots export/import 추가
 - **v1.7.9**: 백업 기본값 비활성화

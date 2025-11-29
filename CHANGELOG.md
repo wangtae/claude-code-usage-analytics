@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] - 2025-11-29
+
+### Added
+- **CLAUDE.md documentation improvements**: Comprehensive AI-assisted development guide
+  - Data robustness principles (7 core principles)
+  - Migration system guide with full code examples
+  - Version release process with checklist
+- **Version documentation**: Created docs/versions/1.8.0.md and 1.8.1.md
+
+### Documentation
+- Enhanced CLAUDE.md for better AI context understanding
+- Added data source hierarchy diagram
+- Added implementation checklist for new features
+
+## [1.8.1] - 2025-11-29
+
+### Fixed
+- **--force flag behavior**: Now triggers full export + conflict skip as intended
+  - Previously only skipped conflict check, keeping incremental export
+  - Fixed: `force=export_all or force` ensures full data export
+
+### Technical Details
+- Modified `src/commands/gist_cmd.py`: push() function parameter mapping fixed
+- Tested: 107,168 records exported successfully on HOME-WT
+
+## [1.8.0] - 2025-11-29
+
+### Added
+- **daily_snapshots sync support**: Full historical data now included in Gist sync
+  - `export_to_json()`: Exports daily_snapshots table data
+  - `import_from_json()`: Imports daily_snapshots with UPSERT (INSERT OR REPLACE)
+  - Chunked export: daily_snapshots included in first chunk only
+
+### Fixed
+- **Data loss on device format**: Previously only `usage_records` (recent data) was synced
+  - Now `daily_snapshots` (full historical aggregates) are also synced
+  - Device format → gist pull now restores complete history
+
+### Technical Details
+- Modified `src/sync/json_export.py`: Added daily_snapshots to export
+- Modified `src/sync/json_import.py`: Added daily_snapshots import with UPSERT
+- Import stats now include `new_snapshots` and `updated_snapshots` counts
+
 ## [1.2.4] - 2025-10-17
 
 ### Changed
