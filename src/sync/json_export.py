@@ -176,6 +176,49 @@ def export_to_json(
                 "total_cost": round(cost_row[0], 2),
             }
 
+        # Export daily_snapshots for full historical data sync
+        snapshots_query = """
+            SELECT
+                date,
+                total_prompts,
+                total_responses,
+                total_sessions,
+                total_tokens,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                snapshot_timestamp
+            FROM daily_snapshots
+        """
+
+        snap_params: tuple = ()
+        if since_date:
+            snapshots_query += " WHERE date >= ?"
+            snap_params = (since_date,)
+
+        snapshots_query += " ORDER BY date ASC"
+
+        cursor.execute(snapshots_query, snap_params)
+
+        daily_snapshots = []
+        for row in cursor:
+            daily_snapshots.append({
+                "date": row[0],
+                "total_prompts": row[1],
+                "total_responses": row[2],
+                "total_sessions": row[3],
+                "total_tokens": row[4],
+                "input_tokens": row[5],
+                "output_tokens": row[6],
+                "cache_creation_tokens": row[7],
+                "cache_read_tokens": row[8],
+                "snapshot_timestamp": row[9],
+            })
+
+        if daily_snapshots:
+            result["daily_snapshots"] = daily_snapshots
+
         return result
 
     finally:
@@ -406,6 +449,33 @@ def _export_chunked_by_count(
     if not all_records:
         return []
 
+    # Fetch daily_snapshots for the period (to include in first chunk only)
+    snapshots_query = """
+        SELECT
+            date, total_prompts, total_responses, total_sessions,
+            total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens, snapshot_timestamp
+        FROM daily_snapshots
+        WHERE date >= ? AND date <= ?
+        ORDER BY date ASC
+    """
+    cursor.execute(snapshots_query, (effective_start, end_date))
+
+    daily_snapshots = []
+    for row in cursor:
+        daily_snapshots.append({
+            "date": row[0],
+            "total_prompts": row[1],
+            "total_responses": row[2],
+            "total_sessions": row[3],
+            "total_tokens": row[4],
+            "input_tokens": row[5],
+            "output_tokens": row[6],
+            "cache_creation_tokens": row[7],
+            "cache_read_tokens": row[8],
+            "snapshot_timestamp": row[9],
+        })
+
     # Split into chunks
     chunks = []
     total_chunks = (len(all_records) + max_records - 1) // max_records  # Ceiling division
@@ -420,7 +490,7 @@ def _export_chunked_by_count(
         output_tokens = sum(r.get("output_tokens", 0) or 0 for r in chunk_records)
         sessions = len(set(r["session_id"] for r in chunk_records))
 
-        chunks.append({
+        chunk_data = {
             "machine_name": machine_name,
             "export_date": export_date,
             "period": f"{start_date[:7]}",
@@ -437,7 +507,13 @@ def _export_chunked_by_count(
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
             },
-        })
+        }
+
+        # Include daily_snapshots only in first chunk
+        if chunk_num == 1 and daily_snapshots:
+            chunk_data["daily_snapshots"] = daily_snapshots
+
+        chunks.append(chunk_data)
 
     return chunks
 
@@ -524,7 +600,7 @@ def _export_period(
     else:
         period = start_date[:7]  # Year-month
 
-    return {
+    result = {
         "machine_name": machine_name,
         "export_date": export_date,
         "period": period,
@@ -541,6 +617,38 @@ def _export_period(
             "output_tokens": stats_row[4],
         },
     }
+
+    # Export daily_snapshots for this period
+    snapshots_query = """
+        SELECT
+            date, total_prompts, total_responses, total_sessions,
+            total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens, snapshot_timestamp
+        FROM daily_snapshots
+        WHERE date >= ? AND date <= ?
+        ORDER BY date ASC
+    """
+    cursor.execute(snapshots_query, (effective_start, end_date))
+
+    daily_snapshots = []
+    for row in cursor:
+        daily_snapshots.append({
+            "date": row[0],
+            "total_prompts": row[1],
+            "total_responses": row[2],
+            "total_sessions": row[3],
+            "total_tokens": row[4],
+            "input_tokens": row[5],
+            "output_tokens": row[6],
+            "cache_creation_tokens": row[7],
+            "cache_read_tokens": row[8],
+            "snapshot_timestamp": row[9],
+        })
+
+    if daily_snapshots:
+        result["daily_snapshots"] = daily_snapshots
+
+    return result
 
 
 def save_json_export(

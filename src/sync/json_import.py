@@ -54,6 +54,8 @@ def import_from_json(
         "new_records": 0,
         "duplicate_records": 0,
         "errors": 0,
+        "new_snapshots": 0,
+        "updated_snapshots": 0,
     }
 
     if dry_run:
@@ -67,6 +69,19 @@ def import_from_json(
                 stats["new_records"] += 1
             else:
                 stats["errors"] += 1
+
+        # Validate daily_snapshots if present
+        if "daily_snapshots" in json_data:
+            required_snapshot_fields = [
+                "date", "total_prompts", "total_responses", "total_sessions",
+                "total_tokens", "input_tokens", "output_tokens"
+            ]
+            for snapshot in json_data["daily_snapshots"]:
+                if all(field in snapshot for field in required_snapshot_fields):
+                    stats["new_snapshots"] += 1
+                else:
+                    stats["errors"] += 1
+
         return stats
 
     # Open database for writing
@@ -127,6 +142,55 @@ def import_from_json(
 
         # Commit transaction
         conn.commit()
+
+        # Import daily_snapshots if present
+        if "daily_snapshots" in json_data:
+            for snapshot in json_data["daily_snapshots"]:
+                try:
+                    # Check if snapshot exists
+                    cursor.execute(
+                        "SELECT date FROM daily_snapshots WHERE date = ?",
+                        (snapshot["date"],)
+                    )
+                    existing = cursor.fetchone()
+
+                    # Use INSERT OR REPLACE (UPSERT) to handle both new and updated
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO daily_snapshots (
+                            date,
+                            total_prompts,
+                            total_responses,
+                            total_sessions,
+                            total_tokens,
+                            input_tokens,
+                            output_tokens,
+                            cache_creation_tokens,
+                            cache_read_tokens,
+                            snapshot_timestamp
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        snapshot["date"],
+                        snapshot["total_prompts"],
+                        snapshot["total_responses"],
+                        snapshot["total_sessions"],
+                        snapshot["total_tokens"],
+                        snapshot["input_tokens"],
+                        snapshot["output_tokens"],
+                        snapshot.get("cache_creation_tokens", 0),
+                        snapshot.get("cache_read_tokens", 0),
+                        snapshot.get("snapshot_timestamp", json_data["export_date"]),
+                    ))
+
+                    if existing:
+                        stats["updated_snapshots"] += 1
+                    else:
+                        stats["new_snapshots"] += 1
+
+                except Exception as e:
+                    print(f"Warning: Failed to import snapshot for {snapshot.get('date', 'unknown')}: {e}")
+                    stats["errors"] += 1
+
+            conn.commit()
 
         # Ensure sync_metadata table exists
         cursor.execute("""
@@ -231,6 +295,8 @@ def merge_multiple_exports(
         "new_records": 0,
         "duplicate_records": 0,
         "errors": 0,
+        "new_snapshots": 0,
+        "updated_snapshots": 0,
         "files_processed": 0,
         "files_failed": 0,
         "per_file": {},
@@ -242,6 +308,8 @@ def merge_multiple_exports(
             total_stats["new_records"] += stats["new_records"]
             total_stats["duplicate_records"] += stats["duplicate_records"]
             total_stats["errors"] += stats["errors"]
+            total_stats["new_snapshots"] += stats.get("new_snapshots", 0)
+            total_stats["updated_snapshots"] += stats.get("updated_snapshots", 0)
             total_stats["files_processed"] += 1
             total_stats["per_file"][str(json_file)] = stats
 

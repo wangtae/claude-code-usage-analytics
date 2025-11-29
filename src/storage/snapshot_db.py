@@ -1279,13 +1279,29 @@ def get_all_machine_db_paths() -> list[tuple[str, Path]]:
 
     try:
         machines = get_all_machines()
-        return [(m['machine_name'], storage_dir / f"usage_history_{m['machine_name']}.db")
-                for m in machines]
+        if machines:  # machines.db has data
+            return [(m['machine_name'], storage_dir / f"usage_history_{m['machine_name']}.db")
+                    for m in machines]
     except Exception:
-        # If machines.db doesn't exist or fails, return only current machine
-        from src.config.user_config import get_machine_name
-        machine_name = get_machine_name() or "Unknown"
-        return [(machine_name, storage_dir / f"usage_history_{machine_name}.db")]
+        pass
+
+    # Fallback: scan disk for usage_history_*.db files
+    db_files = list(storage_dir.glob("usage_history_*.db"))
+    if db_files:
+        result = []
+        for db_file in db_files:
+            # Extract machine_name from usage_history_{machine_name}.db
+            filename = db_file.stem  # "usage_history_HOME-WT"
+            if filename.startswith("usage_history_"):
+                machine_name = filename[len("usage_history_"):]
+                result.append((machine_name, db_file))
+        if result:
+            return result
+
+    # Final fallback: return only current machine
+    from src.config.user_config import get_machine_name
+    machine_name = get_machine_name() or "Unknown"
+    return [(machine_name, storage_dir / f"usage_history_{machine_name}.db")]
 
 
 def get_default_db_path() -> Path:
