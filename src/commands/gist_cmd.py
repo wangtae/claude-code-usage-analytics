@@ -116,8 +116,8 @@ def set_token(token: str):
 
 @app.command()
 def push(
-    force: bool = typer.Option(False, "--force", "-f", help="Force push, skip conflict detection (may overwrite changes)"),
-    export_all: bool = typer.Option(False, "--export-all", help="Export all data (not incremental)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force full push: export all data and skip conflict detection"),
+    export_all: bool = typer.Option(False, "--export-all", help="Export all data (not incremental) with conflict detection"),
     backup: bool = typer.Option(False, "--backup", "-b", help="Create backup before overwriting (disabled by default)"),
 ):
     """
@@ -133,9 +133,10 @@ def push(
         sync_manager = SyncManager()
         console.print("Pushing to Gist...", end="")
 
-        # If --force, skip conflict check. Otherwise, use auto-merge.
+        # If --force, skip conflict check AND export all data (full push).
+        # If --export-all, export all data but still check conflicts.
         stats = sync_manager.push(
-            force=export_all,
+            force=export_all or force,  # --force implies full export
             create_backup=backup,  # Backup disabled by default (v1.7.9)
             skip_conflict_check=force
         )
