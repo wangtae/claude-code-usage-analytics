@@ -183,12 +183,185 @@ date_key = get_local_date(timestamp)
 _device_stats_cache.clear()
 ```
 
-### 8. 마이그레이션
+### 8. 마이그레이션 시스템 (중요!)
 
-새 버전에서 DB 스키마 변경 시:
-1. `src/migrations/versions/` 에 새 마이그레이션 파일 생성
-2. 버전 형식: `v{major}_{minor}_{patch}_{description}.py`
-3. `apply()` 함수 구현
+**버전 업데이트 시 기존 사용자 데이터 마이그레이션이 필요한 경우 반드시 마이그레이션을 구현해야 합니다.**
+
+#### 마이그레이션이 필요한 경우
+- DB 스키마 변경 (테이블/컬럼 추가/수정/삭제)
+- 설정 파일 구조 변경
+- 데이터 포맷 변경
+- Gist manifest 구조 변경
+
+#### 마이그레이션이 필요 없는 경우
+- 단순 버그 수정
+- UI/출력 변경
+- 새로운 기능 추가 (기존 데이터에 영향 없음)
+- 코드 리팩토링
+
+#### 마이그레이션 시스템 구조
+
+```
+src/migrations/
+├── __init__.py           # run_migrations, get_migration_status export
+├── base.py               # Migration 베이스 클래스
+├── runner.py             # 마이그레이션 실행 엔진
+└── versions/
+    ├── __init__.py       # ALL_MIGRATIONS 리스트 (여기에 등록!)
+    ├── v1_7_6_manifest_data_files.py
+    ├── v1_7_7_sync_check.py
+    └── v1_7_9_disable_backup.py
+```
+
+#### 마이그레이션 동작 방식
+1. **CLI 시작 시 자동 실행** (`src/cli.py:176-183`)
+2. `version_info.db`에서 저장된 버전과 현재 버전 비교
+3. 적용되지 않은 마이그레이션을 버전 순서대로 실행
+4. 실행 결과를 `migration_history` 테이블에 기록
+
+#### 새 마이그레이션 생성 방법
+
+**1단계: 마이그레이션 파일 생성**
+
+`src/migrations/versions/v{major}_{minor}_{patch}_{description}.py`:
+
+```python
+"""
+Migration: 설명
+Version: 1.8.2
+"""
+
+from src.migrations.base import Migration, MigrationResult
+
+
+class MyFeatureMigration(Migration):
+    """마이그레이션 설명."""
+
+    version = "1.8.2"  # pyproject.toml 버전과 일치
+    name = "Add new feature table"
+    description = "새 기능을 위한 테이블 추가"
+
+    def check_required(self) -> bool:
+        """
+        마이그레이션 실행 여부 확인.
+
+        기본값은 True (항상 실행).
+        조건부 실행이 필요한 경우 오버라이드.
+        """
+        # 예: 특정 테이블이 없을 때만 실행
+        # return not self._table_exists("new_table")
+        return True
+
+    def up(self) -> MigrationResult:
+        """
+        마이그레이션 실행 (업그레이드).
+
+        Returns:
+            MigrationResult(success=True/False, message="...", error="...")
+        """
+        try:
+            import sqlite3
+            from src.storage.snapshot_db import get_current_machine_db_path
+
+            db_path = get_current_machine_db_path()
+            conn = sqlite3.connect(db_path, timeout=30.0)
+            cursor = conn.cursor()
+
+            # 스키마 변경 예시
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS new_feature (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+
+            # 또는 컬럼 추가
+            # cursor.execute("ALTER TABLE existing_table ADD COLUMN new_col TEXT")
+
+            conn.commit()
+            conn.close()
+
+            return MigrationResult(
+                success=True,
+                message="New feature table created"
+            )
+
+        except Exception as e:
+            return MigrationResult(
+                success=False,
+                message="Migration failed",
+                error=str(e)
+            )
+
+    def down(self) -> MigrationResult:
+        """
+        마이그레이션 롤백 (다운그레이드).
+
+        현재 자동 롤백은 지원하지 않지만, 수동 복구용으로 구현 권장.
+        """
+        try:
+            # 롤백 로직
+            return MigrationResult(
+                success=True,
+                message="Rolled back successfully"
+            )
+        except Exception as e:
+            return MigrationResult(
+                success=False,
+                message="Rollback failed",
+                error=str(e)
+            )
+```
+
+**2단계: 마이그레이션 등록**
+
+`src/migrations/versions/__init__.py` 수정:
+
+```python
+# 새 마이그레이션 import 추가
+from src.migrations.versions.v1_8_2_my_feature import MyFeatureMigration
+
+# ALL_MIGRATIONS 리스트에 추가 (순서 무관, 버전으로 자동 정렬)
+ALL_MIGRATIONS: list[Type[Migration]] = [
+    ManifestDataFilesMigration,
+    SyncCheckMigration,
+    DisableBackupMigration,
+    MyFeatureMigration,  # 새로 추가
+]
+```
+
+**3단계: 버전 업데이트**
+
+`pyproject.toml`의 version을 마이그레이션 버전과 일치시킴:
+```toml
+version = "1.8.2"
+```
+
+#### 마이그레이션 테스트
+
+```python
+# 마이그레이션 상태 확인
+from src.migrations import get_migration_status
+status = get_migration_status()
+print(f"Current: {status['current_version']}")
+print(f"Stored: {status['stored_version']}")
+print(f"Pending: {status['pending_count']}")
+
+# 수동 마이그레이션 실행
+from src.migrations import run_migrations
+from rich.console import Console
+result = run_migrations(console=Console())
+print(result)
+```
+
+#### 주의사항
+
+1. **버전 형식**: 반드시 `X.Y.Z` 형식 (예: "1.8.2")
+2. **파일명 형식**: `v{major}_{minor}_{patch}_{description}.py`
+3. **멱등성**: 마이그레이션은 여러 번 실행해도 안전해야 함
+4. **에러 처리**: 실패 시 명확한 에러 메시지 반환
+5. **테스트**: 새 설치와 업그레이드 모두 테스트
 
 ## 테스트
 
